@@ -1,8 +1,10 @@
 import OpenAI from "openai";
+import { resolvedStoryModel } from "@/lib/openai-model-config";
 import { sanitizeChildInput } from "@/lib/safety";
 import {
   ART_STYLE,
   STORY_SCENE_COUNT,
+  type ChildProfile,
   type NarrationLine,
   type Scene,
   type StoryBible,
@@ -189,14 +191,26 @@ function normalizeVoiceCast(
 
 function normalizeLines(lines: NarrationLine[], voiceCast: VoiceCastMember[]) {
   const validSpeakerIds = new Set(voiceCast.map((member) => member.speakerId));
+  const speakerByAlias = new Map<string, VoiceCastMember>();
+
+  voiceCast.forEach((member) => {
+    speakerByAlias.set(cleanSpeakerId(member.speakerId), member);
+    speakerByAlias.set(cleanSpeakerId(member.displayName), member);
+  });
 
   return lines
     .filter((line) => line.text?.trim())
     .slice(0, 4)
     .map((line) => {
-      const speakerId = validSpeakerIds.has(line.speakerId) ? line.speakerId : "narrator";
-      const speakerName =
-        voiceCast.find((member) => member.speakerId === speakerId)?.displayName || "Narrator";
+      const matchedSpeaker =
+        voiceCast.find((member) => member.speakerId === line.speakerId) ||
+        speakerByAlias.get(cleanSpeakerId(line.speakerId)) ||
+        speakerByAlias.get(cleanSpeakerId(line.speakerName));
+      const speakerId =
+        matchedSpeaker && validSpeakerIds.has(matchedSpeaker.speakerId)
+          ? matchedSpeaker.speakerId
+          : "narrator";
+      const speakerName = matchedSpeaker?.displayName || "Narrator";
       return {
         speakerId,
         speakerName,
@@ -206,7 +220,29 @@ function normalizeLines(lines: NarrationLine[], voiceCast: VoiceCastMember[]) {
     });
 }
 
-async function generateFullStoryWithOpenAI(childName: string, childInput: string) {
+function storyStyleHints(ageRange: ChildProfile["ageRange"], storyEnergy: "calm" | "balanced" | "silly") {
+  const ageLine =
+    ageRange === "2-3"
+      ? "Target ages 2-3: very simple vocabulary, short sentences, concrete imagery, gentle repetition."
+      : ageRange === "6-7"
+        ? "Target ages 6-7: richer description and light plot twists are fine; stay kind and clear."
+        : "Target ages 4-5: playful pacing and simple emotional arcs.";
+
+  const energyLine =
+    storyEnergy === "calm"
+      ? "Keep stakes soft and cozy—suitable for winding down."
+      : storyEnergy === "silly"
+        ? "Lean into playful humor and funny beats while staying kind."
+        : "Balance warmth with adventure—neither too sleepy nor too zany.";
+
+  return [ageLine, energyLine];
+}
+
+async function generateFullStoryWithOpenAI(
+  childName: string,
+  childInput: string,
+  hints?: { ageRange: ChildProfile["ageRange"]; storyEnergy: "calm" | "balanced" | "silly" },
+) {
   if (!process.env.OPENAI_API_KEY) {
     return createFallbackStory(childInput, childName);
   }
@@ -214,20 +250,23 @@ async function generateFullStoryWithOpenAI(childName: string, childInput: string
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const response = await openai.chat.completions.create({
-      model: "gpt-4.1",
+      model: resolvedStoryModel(),
       temperature: 0.72,
       response_format: { type: "json_object" },
       messages: [
         {
           role: "system",
           content: [
+            ...(hints ? storyStyleHints(hints.ageRange, hints.storyEnergy) : []),
             "You are an elite preschool picture-book writer and story editor.",
             "Create one complete, linear, emotionally satisfying 4-minute audio story from the child's idea.",
             "The story must be fun, coherent, and easy for kids ages 4-7 to follow.",
             "Use narrator lines for exposition and character speaker IDs only for actual character dialogue.",
+            "Use at least two different named character speakers across the story, plus narrator when helpful.",
+            "Every line speakerId must exactly match one speakerId from voiceCast. Do not invent speakerIds inside scenes.",
             "Never ask the child to choose during the story. No interactive choices.",
             "Use recurring character designs that can be reused exactly in every image.",
-            "The imagePrompt for each scene must describe only a standalone full-bleed scene illustration. Never ask for a book page, open book, printed page, panels, frames, borders, captions, typography, labels, or text inside the image.",
+            "The imagePrompt for each scene must describe only a standalone full-bleed scene illustration. Never ask for a book page, open book, printed page, panels, frames, borders, captions, handwriting or handwriting-like scribbles, fake lettering, scribbled fake words, arrows that point at labels, typography, typography in any signage, typography in any overlays, typography in meme-style captions, typography in infographics.",
             "For characterDesigns, define stable visual identity: species/body shape, size, colors, facial features, clothing/accessories, and one memorable silhouette detail for every recurring character.",
             "Keep the content safe: no graphic violence, real-world instructions, medical/legal advice, sexual content, private data, maps, or internet assistant behavior.",
             "Return only JSON.",
@@ -283,7 +322,7 @@ async function generateFullStoryWithOpenAI(childName: string, childInput: string
                 plotSummary: "Complete beginning-middle-end summary.",
               },
               voiceCast:
-                "Array of 3-5 cast members. Must include narrator. Pick only useful character voices.",
+                "Array of 3-5 cast members. Must include narrator and at least two named character voices. Use stable speakerIds and traits from the available voices.",
               scenes:
                 `Exactly ${STORY_SCENE_COUNT} pages. Each page has title, summary, imagePrompt, and 2-4 lines. Keep the full story near 4 minutes total. Lines include speakerId, speakerName, text, emotion.`,
             },
@@ -314,7 +353,8 @@ async function generateFullStoryWithOpenAI(childName: string, childInput: string
           scene.imagePrompt,
           `Scene ${index + 1} of ${STORY_SCENE_COUNT}.`,
           "Show only the story moment as a standalone full-bleed illustration, with recurring characters matching the character design bible exactly.",
-          "No book pages, no open books, no printed pages, no panel layouts, no captions, no text.",
+          "No book pages, no open books, no printed pages, no panel layouts, no captions.",
+          "No typography, handwriting, fake gibberish text, scribbles that resemble letters, labels, arrows, callouts, color swatches, infographics.",
         ]
           .filter(Boolean)
           .join(" "),
@@ -339,25 +379,32 @@ function createImagePrompt(sceneNumber: number, bible: StoryBible, lines: Narrat
     `Protagonist: ${bible.protagonist}.`,
     `Setting: ${bible.setting}.`,
     `Story idea: ${bible.premise}.`,
-    `Scene action: ${lines.map((line) => line.text).join(" ")}`,
+    `Scene action (paint the moment only; never render dialogue as typography): ${lines.map((line) => line.text).join(" ")}`,
     "Show expressive characters, cozy action, and a clear standalone illustrated story moment.",
-    "No book page, no open book, no printed page, no borders, no panels, no captions, no text.",
+    "No typography of any language, handwriting, handwriting-like marks, scribbles, captions, meme UI, storefront signs.",
+    "No labels, arrows, infographics, color-palette legends, scribbled fake words, watermarks.",
   ].join(" ");
 }
 
 export async function advanceStory(request: StoryTurnRequest): Promise<StoryTurnResponse> {
   const safety = sanitizeChildInput(request.transcript);
   const childName = request.childName || request.session?.childProfile.name || "Luna";
+  const ageRange =
+    request.childAgeRange || request.session?.childProfile.ageRange || ("4-5" as ChildProfile["ageRange"]);
+  const storyEnergy = request.storyEnergy ?? "balanced";
   const intent = safety.status === "allowed" ? safety.sanitizedIntent : safety.childMessage;
   const safeIntent = safety.status === "block" ? "a gentle friendship adventure" : intent;
-  const { bible, voiceCast, scenes } = await generateFullStoryWithOpenAI(childName, safeIntent);
+  const { bible, voiceCast, scenes } = await generateFullStoryWithOpenAI(childName, safeIntent, {
+    ageRange,
+    storyEnergy,
+  });
 
   const session: StorySession = {
     id: request.session?.id || request.sessionId || makeId("story"),
     childProfile: request.session?.childProfile || {
       id: makeId("child"),
       name: childName,
-      ageRange: "4-5",
+      ageRange,
     },
     status: "complete",
     currentSceneIndex: 0,

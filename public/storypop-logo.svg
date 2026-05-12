@@ -1,0 +1,50 @@
+<svg viewBox="0 0 320 82" role="img" aria-label="Storypop" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="storypop-mic-body" x1="16" x2="60" y1="12" y2="62" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fbcfe8" />
+      <stop offset="0.5" stop-color="#f4729a" />
+      <stop offset="1" stop-color="#8b5cf6" />
+    </linearGradient>
+    <linearGradient id="storypop-mic-grill" x1="23" x2="50" y1="17" y2="42" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff7ed" />
+      <stop offset="1" stop-color="#ffe3ad" />
+    </linearGradient>
+  </defs>
+
+  <g transform="rotate(-8 39 40)">
+    <path
+      d="M38.5 62.5c13.2 0 23.8-9.9 23.8-22.2v-4.8"
+      fill="none"
+      stroke="#19154c"
+      stroke-linecap="round"
+      stroke-width="5"
+    />
+    <path
+      d="M20.1 35.5v4.8c0 12.3 8.4 22.2 18.8 22.2"
+      fill="none"
+      stroke="#19154c"
+      stroke-linecap="round"
+      stroke-width="5"
+    />
+    <rect x="22" y="7" width="34" height="48" rx="17" fill="url(#storypop-mic-body)" />
+    <rect x="27" y="14" width="24" height="18" rx="9" fill="url(#storypop-mic-grill)" opacity="0.86" />
+    <path d="M32 20h14M31 26h16" stroke="#d97706" stroke-linecap="round" stroke-width="2.4" opacity="0.55" />
+    <circle cx="33" cy="39" r="2.5" fill="#211957" />
+    <circle cx="45" cy="39" r="2.5" fill="#211957" />
+    <path d="M34.5 46c2.9 2.7 6.9 2.7 9.8 0" fill="none" stroke="#211957" stroke-linecap="round" stroke-width="2.6" />
+    <path d="M39 63v9M29 72h20" stroke="#19154c" stroke-linecap="round" stroke-width="5" />
+    <circle cx="55" cy="18" r="4" fill="#ffd65c" />
+    <path d="M14 18l2.1 4.4 4.6 1.5-4.6 1.5L14 30l-2.1-4.6-4.6-1.5 4.6-1.5L14 18Z" fill="#42c8c9" />
+  </g>
+
+  <g aria-hidden="true" font-family="Arial Rounded MT Bold, Arial, sans-serif" font-size="45" font-weight="1000" letter-spacing="-5">
+    <text x="82" y="55" fill="#8b5cf6">s</text>
+    <text x="107" y="55" fill="#f7a22d">t</text>
+    <text x="132" y="55" fill="#50c5c8">o</text>
+    <text x="157" y="55" fill="#f57a9d">r</text>
+    <text x="182" y="55" fill="#76c78e">y</text>
+    <text x="207" y="55" fill="#8b5cf6">p</text>
+    <text x="232" y="55" fill="#f7a22d">o</text>
+    <text x="257" y="55" fill="#50c5c8">p</text>
+  </g>
+</svg>

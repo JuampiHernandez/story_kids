@@ -1,7 +1,7 @@
 "use client";
 
 import { clsx } from "clsx";
-import { AudioLines, LoaderCircle, Mic } from "lucide-react";
+import { LoaderCircle, Mic } from "lucide-react";
 
 type VoiceOrbProps = {
   mode: "idle" | "listening" | "thinking" | "speaking" | "painting";
@@ -9,12 +9,8 @@ type VoiceOrbProps = {
 };
 
 export function VoiceOrb({ mode, compact = false }: VoiceOrbProps) {
-  const Icon =
-    mode === "speaking" || mode === "listening"
-      ? AudioLines
-      : mode === "thinking" || mode === "painting"
-        ? LoaderCircle
-        : Mic;
+  const hasAnimatedAudioBars = mode === "speaking" || mode === "listening";
+  const Icon = mode === "thinking" || mode === "painting" ? LoaderCircle : Mic;
 
   return (
     <div className={clsx("orb-wrap", compact && "orb-wrap-compact")} aria-label={`Voice state: ${mode}`}>
@@ -22,7 +18,7 @@ export function VoiceOrb({ mode, compact = false }: VoiceOrbProps) {
         <span className="voice-wave voice-wave-one" />
         <span className="voice-wave voice-wave-two" />
         <span className="voice-wave voice-wave-three" />
-        <Icon size={54} strokeWidth={1.8} />
+        {!hasAnimatedAudioBars ? <Icon size={54} strokeWidth={1.8} /> : null}
       </div>
       <p className="orb-caption">
         {mode === "idle" && "Ready"}

@@ -1,19 +1,32 @@
 import { NextResponse } from "next/server";
-import { generateSceneImage } from "@/lib/image-provider";
+import {
+  generateSceneImage,
+  isPlaceholderImageUrl,
+  looksLikeExpiredProneImageUrl,
+} from "@/lib/image-provider";
 import { memoryStories } from "@/lib/memory-store";
+import type { ImageQualityTier } from "@/lib/openai-model-config";
 import { getStorySession, saveStorySession } from "@/lib/supabase";
 
 export const runtime = "nodejs";
+
+const IMAGE_TIERS = new Set<ImageQualityTier>(["low", "medium", "high"]);
 
 export async function POST(request: Request) {
   const body = (await request.json()) as {
     sessionId?: string;
     sceneId?: string;
+    imageQualityTier?: ImageQualityTier;
   };
 
   if (!body.sessionId || !body.sceneId) {
     return NextResponse.json({ error: "Missing sessionId or sceneId" }, { status: 400 });
   }
+
+  const imageQualityTier =
+    body.imageQualityTier && IMAGE_TIERS.has(body.imageQualityTier)
+      ? body.imageQualityTier
+      : undefined;
 
   const session = memoryStories.get(body.sessionId) || (await getStorySession(body.sessionId));
   if (!session) {
@@ -25,8 +38,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Scene not found" }, { status: 404 });
   }
 
-  if (!scene.imageUrl) {
-    scene.imageUrl = await generateSceneImage(scene, session.storyBible);
+  if (
+    !scene.imageUrl ||
+    isPlaceholderImageUrl(scene.imageUrl) ||
+    looksLikeExpiredProneImageUrl(scene.imageUrl)
+  ) {
+    scene.imageUrl = await generateSceneImage(scene, session.storyBible, { imageQualityTier });
     session.updatedAt = new Date().toISOString();
     memoryStories.set(session.id, session);
     await saveStorySession(session);

@@ -1,7 +1,23 @@
 import OpenAI from "openai";
+import {
+  isDallE2Model,
+  resolvedImageModel,
+  resolveImageGenerationParams,
+  type ImageQualityTier,
+} from "@/lib/openai-model-config";
 import { ART_STYLE, type Scene, type StoryBible } from "@/lib/story-schema";
 
-const PLACEHOLDER_IMAGE =
+/** OpenAI DALL·E temporary download URLs (Azure blob) expire after about an hour — do not persist as the only copy. */
+export function looksLikeExpiredProneImageUrl(url: string): boolean {
+  if (!url.startsWith("http://") && !url.startsWith("https://")) return false;
+  try {
+    return new URL(url).hostname.endsWith(".blob.core.windows.net");
+  } catch {
+    return false;
+  }
+}
+
+export const PLACEHOLDER_IMAGE =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
@@ -20,9 +36,37 @@ const PLACEHOLDER_IMAGE =
   <text x="512" y="894" text-anchor="middle" font-family="Arial" font-size="54" fill="#7c2d12">Toddler Tales</text>
 </svg>`);
 
-const DEFAULT_IMAGE_MODEL = "dall-e-3";
+export function isPlaceholderImageUrl(imageUrl?: string) {
+  return imageUrl === PLACEHOLDER_IMAGE;
+}
 
-export async function generateSceneImage(scene: Scene, storyBible: StoryBible) {
+function compactForDallE2(prompt: string, scene: Scene, storyBible: StoryBible) {
+  const compactPrompt = [
+    "Kid-friendly watercolor storybook illustration. No words, letters, labels, captions, signs, or UI.",
+    `Story: ${storyBible.plotSummary}`,
+    storyBible.characterDesigns ? `Characters: ${storyBible.characterDesigns}` : "",
+    `Scene ${scene.sceneNumber}: ${scene.imagePrompt}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return compactPrompt.length <= 980 ? compactPrompt : `${compactPrompt.slice(0, 977)}...`;
+}
+
+async function imageUrlToDataUrl(imageUrl: string) {
+  const response = await fetch(imageUrl);
+  if (!response.ok) return imageUrl;
+
+  const contentType = response.headers.get("content-type") || "image/png";
+  const imageBuffer = Buffer.from(await response.arrayBuffer());
+  return `data:${contentType};base64,${imageBuffer.toString("base64")}`;
+}
+
+export async function generateSceneImage(
+  scene: Scene,
+  storyBible: StoryBible,
+  options?: { imageQualityTier?: ImageQualityTier },
+) {
   if (!process.env.OPENAI_API_KEY) {
     return PLACEHOLDER_IMAGE;
   }
@@ -33,7 +77,9 @@ export async function generateSceneImage(scene: Scene, storyBible: StoryBible) {
     [
       "Create one full-bleed scene illustration only.",
       "The output must look like a standalone story moment, not a photographed book, not an open book, not a printed page, not a collage, not a two-page spread.",
-      "Do not include any written words, letters, page numbers, captions, speech bubbles, frames, panels, borders, UI, logos, watermarks, or typography.",
+      "Do not include any written words, letters, numbers, handwriting, handwriting-like scribbles, fake gibberish text, captions, subtitles, storefront signs, street signs.",
+      "No labels, arrows, callouts, tooltips, infographics, color-palette stripes, typography in any script, meme captions, meme UI, meme stickers.",
+      "No speech bubbles containing text — if mouths move, imply speech visually only without letters.",
       "Use the same character proportions, colors, clothing/accessories, face shapes, and silhouettes in every scene.",
       "Keep camera style consistent: medium-wide child-friendly composition, soft watercolor texture, rounded toy-like characters, warm pastel lighting.",
     ].join(" "),
@@ -46,31 +92,30 @@ export async function generateSceneImage(scene: Scene, storyBible: StoryBible) {
     .filter(Boolean)
     .join("\n");
 
-  const model = process.env.OPENAI_IMAGE_MODEL || DEFAULT_IMAGE_MODEL;
+  const model = resolvedImageModel();
+  const trimmedModel = model.trim();
+  const params = resolveImageGenerationParams(model, options?.imageQualityTier);
+  const finalPrompt = isDallE2Model(model) ? compactForDallE2(prompt, scene, storyBible) : prompt;
+  const requestB64Json =
+    isDallE2Model(trimmedModel) || trimmedModel.startsWith("dall-e-3");
 
   try {
-    const result = model.startsWith("dall-e")
-      ? await openai.images.generate({
-          model,
-          prompt,
-          size: "1024x1024",
-          quality: "standard",
-          n: 1,
-        })
-      : await openai.images.generate({
-          model,
-          prompt,
-          size: "1024x1024",
-          quality: "low",
-          n: 1,
-        });
+    const result = await openai.images.generate({
+      ...params,
+      prompt: finalPrompt,
+      ...(requestB64Json ? ({ response_format: "b64_json" } as const) : {}),
+    });
 
     const image = result.data?.[0];
     if (image?.b64_json) {
       return `data:image/png;base64,${image.b64_json}`;
     }
 
-    return image?.url || PLACEHOLDER_IMAGE;
+    if (image?.url) {
+      return await imageUrlToDataUrl(image.url);
+    }
+
+    return PLACEHOLDER_IMAGE;
   } catch (error) {
     console.error("OpenAI image generation failed", error);
     return PLACEHOLDER_IMAGE;

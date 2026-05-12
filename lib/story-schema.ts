@@ -6,7 +6,10 @@ export const ART_STYLE =
     "soft rounded shapes, warm light, kid-friendly cinematic composition",
     "consistent cute character designs across every scene",
     "single image only, no book mockup, no open book, no page layout, no panels, no borders",
-    "no text, no letters, no captions, no logos, no UI",
+    "absolutely zero text anywhere: no words, letters, numbers, handwriting, scribbles that look like text, captions, subtitles, banners, storefront signs",
+    "no labels, arrows, callouts, tooltips, infographic keys, anatomy charts, color swatches with text, watermark, logo, or UI",
+    "never draw fake gibberish text, scribbled handwriting, handwriting-like marks, captions, doodle labels, arrows pointing to captions, infographic annotations, meme-style overlays, infographic UI, HUD, infographic legend, typography of any language",
+    "pure illustrated scene only, like a children's picture book print with no typography",
   ].join(", ");
 
 export const STORY_DURATION_SECONDS = 240;
@@ -93,6 +96,8 @@ export const storySessionSchema = z.object({
 export const storyTurnRequestSchema = z.object({
   sessionId: z.string().optional(),
   childName: z.string().min(1).default("Luna"),
+  childAgeRange: childProfileSchema.shape.ageRange.optional(),
+  storyEnergy: z.enum(["calm", "balanced", "silly"]).optional(),
   transcript: z.string().min(1),
   selectedChoiceId: z.string().optional(),
   session: storySessionSchema.optional(),

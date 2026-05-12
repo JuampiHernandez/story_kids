@@ -1,7 +1,9 @@
-import Image from "next/image";
 import Link from "next/link";
-import { BookOpen, Clock, Home, Mic, Sparkles, Star } from "lucide-react";
+import { BookOpen, Clock, Home, Mic, Sparkles } from "lucide-react";
+import { StorypopLogo } from "@/components/storypop-logo";
+import { StorySceneImage } from "@/components/story-scene-image";
 import { memoryStories } from "@/lib/memory-store";
+import { hasGeneratedStoryImageUrl } from "@/lib/story-image-utils";
 import { listStorySessions } from "@/lib/supabase";
 
 export default async function StoriesPage() {
@@ -23,24 +25,8 @@ export default async function StoriesPage() {
         <span className="sky cloud cloud-two" />
         <header className="app-topbar">
           <Link className="brand-lockup" href="/" aria-label="Storypop home">
-            <div className="mascot-book">
-              <BookOpen size={24} strokeWidth={2.4} />
-              <span />
-            </div>
-            <span className="brand-text" aria-hidden="true">
-              <span>s</span>
-              <span>t</span>
-              <span>o</span>
-              <span>r</span>
-              <span>y</span>
-              <span>p</span>
-              <span>o</span>
-              <span>p</span>
-            </span>
+            <StorypopLogo className="storypop-logo" />
           </Link>
-          <span className="star-button" aria-hidden="true">
-            <Star size={24} fill="currentColor" />
-          </span>
         </header>
 
         <header className="storybook-header">
@@ -52,18 +38,21 @@ export default async function StoriesPage() {
         {stories.length ? (
           <section className="story-library-grid">
             {stories.map((story) => {
-              const coverScene = story.scenes.find((scene) => scene.imageUrl) || story.scenes[0];
+              const coverScene =
+                story.scenes.find(
+                  (scene) => hasGeneratedStoryImageUrl(scene.imageUrl),
+                ) || story.scenes[0];
+              const coverUrl = hasGeneratedStoryImageUrl(coverScene?.imageUrl) ? coverScene.imageUrl : undefined;
 
               return (
                 <Link className="story-library-card" href={`/story/${story.id}`} key={story.id}>
                   <div className="scene-cover">
-                    {coverScene?.imageUrl ? (
-                      <Image
-                        src={coverScene.imageUrl}
-                        alt={coverScene.title}
+                    {coverUrl ? (
+                      <StorySceneImage
+                        src={coverUrl}
+                        alt={coverScene!.title}
                         width={512}
                         height={512}
-                        unoptimized
                       />
                     ) : (
                       <div className="scene-art scene-art-waiting">
@@ -107,13 +96,9 @@ export default async function StoriesPage() {
             <Home size={27} fill="currentColor" />
             home
           </Link>
-          <Link href="/">
-            <Mic size={27} />
-            new story
-          </Link>
           <a className="active" href="#top" aria-current="page">
             <BookOpen size={27} fill="currentColor" />
-            books
+            storybook
           </a>
         </nav>
       </div>

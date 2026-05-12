@@ -1,7 +1,9 @@
-import Image from "next/image";
 import Link from "next/link";
-import { BookOpen, Clock, Home, Mic, Sparkles, Star } from "lucide-react";
+import { BookOpen, Clock, Home, Sparkles, Star } from "lucide-react";
+import { StorypopLogo } from "@/components/storypop-logo";
 import { StoryAudioPlayer } from "@/components/story-audio-player";
+import { StorySceneImage } from "@/components/story-scene-image";
+import { hasGeneratedStoryImageUrl } from "@/lib/story-image-utils";
 import type { StorySession } from "@/lib/story-schema";
 
 type StorybookViewProps = {
@@ -16,30 +18,13 @@ export function StorybookView({ session }: StorybookViewProps) {
         <span className="sky cloud cloud-two" />
         <header className="app-topbar">
           <Link className="brand-lockup" href="/" aria-label="Storypop home">
-            <div className="mascot-book">
-              <BookOpen size={24} strokeWidth={2.4} />
-              <span />
-            </div>
-            <span className="brand-text" aria-hidden="true">
-              <span>s</span>
-              <span>t</span>
-              <span>o</span>
-              <span>r</span>
-              <span>y</span>
-              <span>p</span>
-              <span>o</span>
-              <span>p</span>
-            </span>
+            <StorypopLogo className="storypop-logo" />
           </Link>
-          <span className="star-button" aria-hidden="true">
-            <Star size={24} fill="currentColor" />
-          </span>
         </header>
 
         <header className="storybook-header">
           <p className="eyebrow">my books</p>
           <h1>{session.storyBible.protagonist}&apos;s Story</h1>
-          <p>Your magical library story for {session.childProfile.name}.</p>
           <div className="library-meta">
             <span>
               <Clock size={18} /> 4 min
@@ -58,13 +43,12 @@ export function StorybookView({ session }: StorybookViewProps) {
           {session.scenes.map((scene, index) => (
             <article className="storybook-scene" key={scene.id}>
               <div className="scene-cover">
-                {scene.imageUrl ? (
-                  <Image
+                {hasGeneratedStoryImageUrl(scene.imageUrl) ? (
+                  <StorySceneImage
                     src={scene.imageUrl}
                     alt={scene.title}
                     width={1024}
                     height={1024}
-                    unoptimized
                   />
                 ) : (
                   <div className="scene-art scene-art-waiting">
@@ -92,13 +76,9 @@ export function StorybookView({ session }: StorybookViewProps) {
             <Home size={27} fill="currentColor" />
             home
           </Link>
-          <Link href="/">
-            <Mic size={27} />
-            new story
-          </Link>
           <a className="active" href="#top" aria-current="page">
             <BookOpen size={27} fill="currentColor" />
-            this book
+            storybook
           </a>
         </nav>
       </div>

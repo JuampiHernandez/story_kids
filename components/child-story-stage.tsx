@@ -10,10 +10,9 @@ import {
   Mic,
   Pause,
   Play,
-  Share2,
-  Star,
 } from "lucide-react";
 import { VoiceOrb } from "@/components/voice-orb";
+import { StorypopLogo } from "@/components/storypop-logo";
 import type {
   NarrationLine,
   Scene,
@@ -22,6 +21,14 @@ import type {
   VoiceCastMember,
   VoiceTrait,
 } from "@/lib/story-schema";
+import {
+  DEFAULT_STORY_SETTINGS,
+  loadStorySettings,
+  STORY_SETTINGS_CHANGED_EVENT,
+  type StoryParentSettings,
+} from "@/lib/story-settings";
+import { SettingsAvatarLink } from "@/components/settings-avatar-link";
+import { hasGeneratedStoryImageUrl } from "@/lib/story-image-utils";
 
 type StageMode = "idle" | "listening" | "thinking" | "speaking" | "painting";
 
@@ -48,8 +55,6 @@ declare global {
   }
 }
 
-const childName = "Luna";
-const openingPrompt = `Hi ${childName}. What should our story be about?`;
 const thinkingPrompt = "Great idea. I’m dreaming up a cool story now.";
 const listenSilenceMs = 1900;
 const minimumListenMs = 4500;
@@ -68,18 +73,28 @@ type ActiveSpeaker = Pick<VoiceCastMember, "displayName" | "speakerId"> & {
   trait: VoiceTrait;
 };
 
-function getSpeakerInitials(name: string) {
-  const initials = name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase())
-    .join("");
+function emojiForSpeaker(speakerId: string, displayName: string, trait: VoiceTrait): string {
+  const id = speakerId.toLowerCase();
+  const hint = `${displayName}`.toLowerCase();
 
-  return initials || "?";
+  if (id === "narrator" || trait === "narrator") return "📖";
+  if (trait === "tiny" || /\bbaby\b|\btoddler\b|\btiny\b/.test(hint)) return "👶";
+  if (trait === "wise") return "🦉";
+  if (trait === "silly" || /\bdog\b|\bpupp(y|ies)\b/.test(hint)) return "🐶";
+  if (/\bcat\b|\bkitten\b/.test(hint)) return "🐱";
+  if (trait === "brave") {
+    if (/\bboy\b|\bdad\b|\bgrandpa\b|\bsir\b|\bking\b|\bprince\b|\bwolf\b|\bdragon\b/.test(hint)) {
+      return "👦";
+    }
+
+    return "👧";
+  }
+  if (trait === "gentle") return "🤗";
+  return "✨";
 }
 
 export function ChildStoryStage() {
+  const [parentSettings, setParentSettings] = useState<StoryParentSettings>(DEFAULT_STORY_SETTINGS);
   const [mode, setMode] = useState<StageMode>("idle");
   const [hasStarted, setHasStarted] = useState(false);
   const [storyEnded, setStoryEnded] = useState(false);
@@ -109,6 +124,24 @@ export function ChildStoryStage() {
   const didSubmitListeningRef = useRef(false);
   const audioUrlCacheRef = useRef(new Map<string, string>());
   const audioPromiseCacheRef = useRef(new Map<string, Promise<string | null>>());
+
+  const openingPrompt = useMemo(() => {
+    const name = parentSettings.childName.trim() || "friend";
+    return `Hi ${name}. What should our story be about?`;
+  }, [parentSettings.childName]);
+
+  useEffect(() => {
+    const refresh = () => setParentSettings(loadStorySettings());
+    const timeout = window.setTimeout(refresh, 0);
+    window.addEventListener("storage", refresh);
+    window.addEventListener(STORY_SETTINGS_CHANGED_EVENT, refresh);
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener(STORY_SETTINGS_CHANGED_EVENT, refresh);
+    };
+  }, []);
+
   const imageUrlBySceneRef = useRef(new Map<string, string>());
   const imagePromiseCacheRef = useRef(new Map<string, Promise<string | null>>());
 
@@ -339,7 +372,7 @@ export function ChildStoryStage() {
 
   const requestSceneImage = useCallback(
     async (storySession: StorySession, scene: Scene) => {
-      if (scene.imageUrl) {
+      if (hasGeneratedStoryImageUrl(scene.imageUrl)) {
         imageUrlBySceneRef.current.set(scene.id, scene.imageUrl);
         return scene.imageUrl;
       }
@@ -355,13 +388,17 @@ export function ChildStoryStage() {
           const response = await fetch("/api/story/image", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ sessionId: storySession.id, sceneId: scene.id }),
+            body: JSON.stringify({
+              sessionId: storySession.id,
+              sceneId: scene.id,
+              imageQualityTier: parentSettings.imageQualityTier,
+            }),
           });
 
           if (!response.ok) return null;
 
           const data = (await response.json()) as { sceneId: string; imageUrl?: string };
-          if (!data.imageUrl) return null;
+          if (!hasGeneratedStoryImageUrl(data.imageUrl)) return null;
 
           imageUrlBySceneRef.current.set(data.sceneId, data.imageUrl);
           setSession((previous) => {
@@ -388,7 +425,7 @@ export function ChildStoryStage() {
       imagePromiseCacheRef.current.set(scene.id, promise);
       return promise;
     },
-    [],
+    [parentSettings.imageQualityTier],
   );
 
   const preloadStoryAssets = useCallback(
@@ -410,45 +447,39 @@ export function ChildStoryStage() {
     [preloadSceneAudio, requestSceneImage],
   );
 
-  const waitForEnoughImages = useCallback(
-    async (storySession: StorySession) => {
-      const targetReadyCount = Math.ceil(storySession.scenes.length * 0.6);
-      const imagePromises = storySession.scenes.map((scene) => requestSceneImage(storySession, scene));
-      const pending = new Set(imagePromises);
+  const waitForSceneImage = useCallback(
+    async (storySession: StorySession, scene: Scene) => {
+      const cachedUrl =
+        imageUrlBySceneRef.current.get(scene.id) || (hasGeneratedStoryImageUrl(scene.imageUrl) ? scene.imageUrl : null);
 
-      const readyFromStartCount = () => {
-        let readyCount = 0;
+      if (cachedUrl) return cachedUrl;
 
-        for (const scene of storySession.scenes) {
-          if (!scene.imageUrl && !imageUrlBySceneRef.current.has(scene.id)) break;
-          readyCount += 1;
-        }
+      setCaption(`Painting page ${scene.sceneNumber}...`);
+      const imageUrl = await requestSceneImage(storySession, scene);
 
-        return readyCount;
-      };
-
-      setCaption(`Getting the first pages ready... 0/${targetReadyCount}`);
-
-      while (readyFromStartCount() < targetReadyCount && pending.size > 0) {
-        const settled = await Promise.race(
-          Array.from(pending).map((promise) =>
-            promise.then(
-              () => ({ promise }),
-              () => ({ promise }),
-            ),
-          ),
-        );
-        pending.delete(settled.promise);
-        setCaption(
-          `Getting the first pages ready... ${Math.min(readyFromStartCount(), targetReadyCount)}/${targetReadyCount}`,
-        );
+      if (!imageUrl) {
+        throw new Error("Story image generation failed");
       }
 
-      if (readyFromStartCount() < targetReadyCount) {
-        throw new Error("Not enough ordered story images were generated");
-      }
+      return imageUrl;
     },
     [requestSceneImage],
+  );
+
+  const waitForInitialImages = useCallback(
+    async (storySession: StorySession) => {
+      const targetReadyCount = Math.max(1, Math.ceil(storySession.scenes.length * 0.6));
+      const scenesToPrepare = storySession.scenes.slice(0, targetReadyCount);
+
+      for (let index = 0; index < scenesToPrepare.length; index += 1) {
+        const scene = scenesToPrepare[index];
+        setCaption(`Painting your book... ${index}/${targetReadyCount}`);
+        await waitForSceneImage(storySession, scene);
+      }
+
+      setCaption(`Painting your book... ${targetReadyCount}/${targetReadyCount}`);
+    },
+    [waitForSceneImage],
   );
 
   const playLine = useCallback(
@@ -488,9 +519,8 @@ export function ChildStoryStage() {
       nextScenes.forEach((nextScene) => {
         void preloadSceneAudio(nextScene, storySession.id);
       });
-      void requestSceneImage(storySession, scene);
-      const imageUrl = imageUrlBySceneRef.current.get(scene.id) || scene.imageUrl;
-      setCurrentScene(imageUrl ? { ...scene, imageUrl } : scene);
+      const imageUrl = await waitForSceneImage(storySession, scene);
+      setCurrentScene({ ...scene, imageUrl });
       setSpokenTranscript("");
       setError("");
       await new Promise((resolve) => setTimeout(resolve, 260));
@@ -509,7 +539,7 @@ export function ChildStoryStage() {
 
       setMode("painting");
     },
-    [playLine, preloadSceneAudio, requestSceneImage, shouldStopStory, waitUntilResumed],
+    [playLine, preloadSceneAudio, shouldStopStory, waitForSceneImage, waitUntilResumed],
   );
 
   const playStory = useCallback(
@@ -572,7 +602,9 @@ export function ChildStoryStage() {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            childName,
+            childName: parentSettings.childName.trim() || DEFAULT_STORY_SETTINGS.childName,
+            childAgeRange: parentSettings.childAgeRange,
+            storyEnergy: parentSettings.storyEnergy,
             transcript: trimmedTranscript,
             sessionId: session?.id,
           }),
@@ -593,14 +625,21 @@ export function ChildStoryStage() {
         if (shouldStopStory(runId)) return;
         setSession(data.session);
         preloadStoryAssets(data.session);
-        await waitForEnoughImages(data.session);
+        if (!data.session.scenes.length) {
+          throw new Error("Story has no scenes");
+        }
+        await waitForInitialImages(data.session);
         if (shouldStopStory(runId)) return;
         await playStory(data.session);
       } catch (unknownError) {
         if (shouldStopStory(runId)) return;
         console.error(unknownError);
         playCue("error");
-        setError("The story cloud hiccuped. Tap Start to try again.");
+        setError(
+          unknownError instanceof Error && unknownError.message === "Story image generation failed"
+            ? "I couldn’t paint the page. Tap Start to try again."
+            : "The story cloud hiccuped. Tap Start to try again.",
+        );
         setMode("idle");
         setHasStarted(false);
         setIsGenerating(false);
@@ -611,10 +650,13 @@ export function ChildStoryStage() {
       playCue,
       playStory,
       preloadStoryAssets,
+      parentSettings.childAgeRange,
+      parentSettings.childName,
+      parentSettings.storyEnergy,
       session,
       shouldStopStory,
       speakNarrator,
-      waitForEnoughImages,
+      waitForInitialImages,
     ],
   );
 
@@ -732,7 +774,7 @@ export function ChildStoryStage() {
       recognitionRef.current = recognition;
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = "en-US";
+      recognition.lang = parentSettings.speechLocale;
       recognition.onresult = (event) => {
         const transcript = Array.from(event.results)
           .map((result) => result[0]?.transcript)
@@ -774,7 +816,7 @@ export function ChildStoryStage() {
       return;
     }
 
-  }, [clearListeningTimers, playCue, startMediaRecorderFallback, submitTranscript]);
+  }, [clearListeningTimers, playCue, parentSettings.speechLocale, startMediaRecorderFallback, submitTranscript]);
 
   useEffect(() => {
     startListeningRef.current = startListening;
@@ -822,6 +864,7 @@ export function ChildStoryStage() {
     clearAssetCaches,
     hasStarted,
     mode,
+    openingPrompt,
     playCue,
     setStoryPaused,
     shouldStopStory,
@@ -898,33 +941,22 @@ export function ChildStoryStage() {
             <span className="sky sparkle sparkle-two">★</span>
           </>
         ) : null}
+        {!currentScene && !showGeneratingScreen ? (
+          <div className="fairy-forest" aria-hidden="true">
+            <span className="fairy-tree fairy-tree-one" />
+            <span className="fairy-tree fairy-tree-two" />
+            <span className="fairy-tree fairy-tree-three" />
+            <span className="fairy-tree fairy-tree-four" />
+            <span className="fairy-firefly fairy-firefly-one" />
+            <span className="fairy-firefly fairy-firefly-two" />
+            <span className="fairy-firefly fairy-firefly-three" />
+          </div>
+        ) : null}
         <header className="app-topbar">
           <div className="brand-lockup" aria-label="Storypop">
-            <div className="mascot-book">
-              <BookOpen size={24} strokeWidth={2.4} />
-              <span />
-            </div>
-            <span className="brand-text" aria-hidden="true">
-              <span>s</span>
-              <span>t</span>
-              <span>o</span>
-              <span>r</span>
-              <span>y</span>
-              <span>p</span>
-              <span>o</span>
-              <span>p</span>
-            </span>
+            <StorypopLogo className="storypop-logo" />
           </div>
-          <a
-            className="star-button"
-            href={shareUrl || "#"}
-            aria-label={shareUrl ? "Open saved storybook" : "Favorite stories"}
-            onClick={(event) => {
-              if (!shareUrl) event.preventDefault();
-            }}
-          >
-            <Star size={24} fill="currentColor" />
-          </a>
+          <SettingsAvatarLink />
         </header>
 
         {currentScene ? (
@@ -936,12 +968,9 @@ export function ChildStoryStage() {
                   Page <strong>{currentScene.sceneNumber}</strong> of {sceneCount}
                 </p>
               </div>
-              <a className="round-icon-button" href={shareUrl || "#"} aria-label="Share storybook">
-                <Share2 size={22} />
-              </a>
             </div>
 
-            {currentScene.imageUrl ? (
+            {hasGeneratedStoryImageUrl(currentScene.imageUrl) ? (
               <div
                 className="scene-art"
                 style={{ backgroundImage: `url("${currentScene.imageUrl}")` }}
@@ -954,16 +983,18 @@ export function ChildStoryStage() {
 
             <div
               className={[
-                "caption-card reader-copy speaker-card",
+                "reader-copy speaker-card",
                 activeSpeaker ? speakerCardClassByTrait[activeSpeaker.trait] : "speaker-card-narrator",
               ].join(" ")}
             >
               <div className="speaker-avatar" aria-hidden="true">
-                {activeSpeaker?.trait === "narrator" ? (
-                  <span className="speaker-shadow" />
-                ) : (
-                  getSpeakerInitials(activeSpeaker?.displayName || activeLine?.speakerName || "Story")
-                )}
+                <span className="speaker-emoji">
+                  {emojiForSpeaker(
+                    activeSpeaker?.speakerId || activeLine?.speakerId || "narrator",
+                    activeSpeaker?.displayName || activeLine?.speakerName || "Narrator",
+                    activeSpeaker?.trait || "narrator",
+                  )}
+                </span>
               </div>
               <div className="speaker-copy">
                 <span className="speaker-name">{activeSpeaker?.displayName || activeLine?.speakerName || "Narrator"}</span>
@@ -980,21 +1011,6 @@ export function ChildStoryStage() {
             </div>
 
             <div className="reader-controls">
-              <VoiceOrb mode={mode} compact />
-              <div className="reader-status">
-                <strong>
-                  {isPaused
-                    ? "Story paused"
-                    : mode === "speaking"
-                      ? "Narrating this page"
-                      : "Preparing the next page"}
-                </strong>
-                <span>
-                  {isPaused
-                    ? "Press play to continue, or home to stop this story."
-                    : "The story advances automatically as the generated voice finishes."}
-                </span>
-              </div>
               <div className="reader-action-group">
                 <button
                   className="reader-play-toggle"
@@ -1005,16 +1021,6 @@ export function ChildStoryStage() {
                   {isPaused ? <Play size={24} fill="currentColor" /> : <Pause size={24} fill="currentColor" />}
                   {isPaused ? "play" : "pause"}
                 </button>
-                <button type="button" onClick={quitToHome} aria-label="Quit story and return home">
-                  <Home size={24} fill="currentColor" />
-                  home
-                </button>
-                {shareUrl ? (
-                  <a className="reader-storybook-link" href={shareUrl}>
-                    <BookOpen size={22} />
-                    storybook
-                  </a>
-                ) : null}
               </div>
             </div>
           </div>
@@ -1095,17 +1101,6 @@ export function ChildStoryStage() {
         ) : null}
       </section>
 
-      {shareUrl ? (
-        <a
-          className="share-pill"
-          href={shareUrl}
-          onClick={(event) => event.stopPropagation()}
-          aria-label="Open saved storybook"
-        >
-          <Share2 size={18} />
-          Storybook
-        </a>
-      ) : null}
     </main>
   );
 }
