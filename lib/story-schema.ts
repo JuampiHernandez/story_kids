@@ -43,6 +43,7 @@ export const narrationLineSchema = z.object({
   speakerName: z.string(),
   text: z.string(),
   emotion: z.enum(["warm", "excited", "curious", "gentle", "silly"]),
+  audioUrl: z.string().optional(), // URL to stored audio file
 });
 
 export const choiceSchema = z.object({
@@ -97,6 +98,7 @@ export const storyTurnRequestSchema = z.object({
   sessionId: z.string().optional(),
   childName: z.string().min(1).default("Luna"),
   childAgeRange: childProfileSchema.shape.ageRange.optional(),
+  useChildAsProtagonist: z.boolean().optional(),
   storyEnergy: z.enum(["calm", "balanced", "silly"]).optional(),
   transcript: z.string().min(1),
   selectedChoiceId: z.string().optional(),

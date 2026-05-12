@@ -5,6 +5,8 @@
 export const DEFAULT_OPENAI_STORY_MODEL = "gpt-4.1";
 /** Default favors lowest image API spend (see `OPENAI_IMAGE_MODEL` / `OPENAI_IMAGE_SIZE`). */
 export const DEFAULT_OPENAI_IMAGE_MODEL = "dall-e-2";
+/** Forced model for the "Disney / Pixar 3D animation" style — always max quality. */
+export const PIXAR_IMAGE_MODEL = "gpt-image-1";
 
 const DALL_E_2_SIZES = ["256x256", "512x512", "1024x1024"] as const;
 
@@ -114,4 +116,17 @@ export function resolveImageGenerationParams(
   tier?: ImageQualityTier,
 ): ImageGenerationBase {
   return tier ? imageGenerationParamsForTier(modelFromEnv, tier) : imageGenerationParams(modelFromEnv);
+}
+
+/**
+ * Fixed top-quality image params for the Disney / Pixar 3D animation style.
+ * Bypasses env / tier resolution: always `gpt-image-1` at `1024x1024` quality `high`.
+ */
+export function pixarImageGenerationParams(): ImageGenerationBase {
+  return {
+    model: PIXAR_IMAGE_MODEL,
+    size: "1024x1024",
+    quality: "high",
+    n: 1,
+  };
 }

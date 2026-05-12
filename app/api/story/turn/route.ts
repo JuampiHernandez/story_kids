@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { memoryStories } from "@/lib/memory-store";
 import { saveStorySession } from "@/lib/supabase";
+import { uploadStoryImages } from "@/lib/supabase-storage";
 import { advanceStory } from "@/lib/story-engine";
 import { storyTurnRequestSchema } from "@/lib/story-schema";
 
@@ -22,8 +23,19 @@ export async function POST(request: Request) {
     (parsed.data.sessionId ? memoryStories.get(parsed.data.sessionId) : undefined);
 
   const result = await advanceStory({ ...parsed.data, session: existing });
-  memoryStories.set(result.session.id, result.session);
-  await saveStorySession(result.session);
+  
+  // Upload any data URL images to Supabase Storage
+  let sessionWithUploadedImages = result.session;
+  try {
+    sessionWithUploadedImages = await uploadStoryImages(result.session);
+    console.log(`Uploaded images for story ${result.session.id}`);
+  } catch (error) {
+    console.error('Failed to upload story images:', error);
+    // Continue with original session if upload fails
+  }
+  
+  memoryStories.set(sessionWithUploadedImages.id, sessionWithUploadedImages);
+  await saveStorySession(sessionWithUploadedImages);
 
-  return NextResponse.json(result);
+  return NextResponse.json({ ...result, session: sessionWithUploadedImages });
 }

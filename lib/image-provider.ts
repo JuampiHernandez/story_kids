@@ -1,11 +1,36 @@
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import {
   isDallE2Model,
+  pixarImageGenerationParams,
   resolvedImageModel,
   resolveImageGenerationParams,
   type ImageQualityTier,
 } from "@/lib/openai-model-config";
 import { ART_STYLE, type Scene, type StoryBible } from "@/lib/story-schema";
+import { dataUrlToBlob, uploadStoryImage } from "@/lib/supabase-storage";
+import type { ImageStyle } from "@/lib/story-settings";
+
+type ChildReferenceImage = {
+  childName: string;
+  faceDataUrl: string;
+};
+
+/**
+ * Art-direction prompt fragment for the "Disney / Pixar 3D animation" style.
+ * Tuned for OpenAI's `gpt-image-1` model — paragraph form, punchy adjectives,
+ * inspired by Disney/Pixar/Dreamworks feature-film CGI references.
+ */
+export const PIXAR_ART_STYLE =
+  [
+    "Pixar-quality 3D animated cartoon style, stylized cinematic CG render in the look of a modern Disney/Pixar/Dreamworks feature film",
+    "stylized cartoon characters with large expressive eyes, soft subsurface skin shading, fluffy stylized hair, gentle rounded silhouettes, friendly proportions",
+    "painterly volumetric lighting with warm golden rim light, soft ambient bounce, cinematic depth of field with creamy bokeh",
+    "lush detailed environments with hand-crafted set dressing, atmospheric haze, magical mood",
+    "vibrant but harmonious color palette, polished feature-film CGI look, high-end studio quality",
+    "family-friendly children's movie aesthetic, single subject focus, full-bleed cinematic composition",
+    "absolutely no text or watermarks anywhere: no words, letters, numbers, captions, subtitles, signs, logos, UI, or typography of any language",
+    "no book mockup, no open book, no page layout, no panels, no borders — pure standalone illustrated scene",
+  ].join(", ");
 
 /** OpenAI DALL·E temporary download URLs (Azure blob) expire after about an hour — do not persist as the only copy. */
 export function looksLikeExpiredProneImageUrl(url: string): boolean {
@@ -62,27 +87,104 @@ async function imageUrlToDataUrl(imageUrl: string) {
   return `data:${contentType};base64,${imageBuffer.toString("base64")}`;
 }
 
+function dataUrlToImageBuffer(dataUrl: string) {
+  const match = dataUrl.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/);
+  if (!match) return null;
+
+  const mimeType = match[1] === "image/jpg" ? "image/jpeg" : match[1];
+  return {
+    buffer: Buffer.from(match[2], "base64"),
+    mimeType,
+  };
+}
+
+async function generateSceneImageFromChildReference(
+  openai: OpenAI,
+  prompt: string,
+  reference: ChildReferenceImage,
+  qualityTier: ImageQualityTier | undefined,
+  isPixar: boolean,
+) {
+  const imageData = dataUrlToImageBuffer(reference.faceDataUrl);
+  if (!imageData) return null;
+
+  const params = isPixar
+    ? pixarImageGenerationParams()
+    : resolveImageGenerationParams("gpt-image-1", qualityTier);
+  const quality = params.quality === "hd" ? "high" : params.quality;
+  const referenceFile = await toFile(imageData.buffer, "child-face.jpg", {
+    type: imageData.mimeType,
+  });
+
+  const result = await openai.images.edit({
+    model: params.model,
+    size: params.size,
+    n: params.n,
+    quality,
+    image: referenceFile,
+    prompt: [
+      "Use the uploaded photo only as the identity reference for the child protagonist.",
+      `The protagonist is ${reference.childName}; preserve their face shape, skin tone, hair, eye shape, and smile while translating them into the requested kid-friendly illustration style.`,
+      "Do not render the source photo itself, a selfie, a photo frame, or a realistic portrait. Create the complete story scene.",
+      prompt,
+    ].join("\n"),
+  });
+
+  const image = result.data?.[0];
+  if (image?.b64_json) {
+    return `data:image/png;base64,${image.b64_json}`;
+  }
+
+  if (image?.url) {
+    return await imageUrlToDataUrl(image.url);
+  }
+
+  return null;
+}
+
 export async function generateSceneImage(
   scene: Scene,
   storyBible: StoryBible,
-  options?: { imageQualityTier?: ImageQualityTier },
+  options?: {
+    imageQualityTier?: ImageQualityTier;
+    imageStyle?: ImageStyle;
+    childReferenceImage?: ChildReferenceImage;
+  },
 ) {
   if (!process.env.OPENAI_API_KEY) {
     return PLACEHOLDER_IMAGE;
   }
 
+  const isPixar = options?.imageStyle === "disney-pixar";
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  const artDirection = isPixar
+    ? PIXAR_ART_STYLE
+    : storyBible.artStyle || ART_STYLE;
+
+  const sceneDirection = isPixar
+    ? [
+        "Create one full-bleed cinematic scene render only.",
+        "Output must look like a single still frame from a Pixar/Disney 3D animated feature, not a photographed book, not an open book, not a printed page, not a collage, not a two-page spread.",
+        "Do not include any written words, letters, numbers, handwriting, handwriting-like scribbles, fake gibberish text, captions, subtitles, storefront signs, or street signs.",
+        "No labels, arrows, callouts, tooltips, infographics, color-palette stripes, typography in any script, meme captions, meme UI, or meme stickers.",
+        "No speech bubbles containing text — if mouths move, imply speech visually only without letters.",
+        "Use the same stylized character proportions, colors, clothing/accessories, face shapes, and silhouettes in every scene.",
+        "Keep camera style consistent: medium-wide child-friendly cinematic composition, polished CG render, soft volumetric lighting with warm rim light, painterly bokeh, vibrant harmonious palette.",
+      ].join(" ")
+    : [
+        "Create one full-bleed scene illustration only.",
+        "The output must look like a standalone story moment, not a photographed book, not an open book, not a printed page, not a collage, not a two-page spread.",
+        "Do not include any written words, letters, numbers, handwriting, handwriting-like scribbles, fake gibberish text, captions, subtitles, storefront signs, street signs.",
+        "No labels, arrows, callouts, tooltips, infographics, color-palette stripes, typography in any script, meme captions, meme UI, meme stickers.",
+        "No speech bubbles containing text — if mouths move, imply speech visually only without letters.",
+        "Use the same character proportions, colors, clothing/accessories, face shapes, and silhouettes in every scene.",
+        "Keep camera style consistent: medium-wide child-friendly composition, soft watercolor texture, rounded toy-like characters, warm pastel lighting.",
+      ].join(" ");
+
   const prompt = [
-    storyBible.artStyle || ART_STYLE,
-    [
-      "Create one full-bleed scene illustration only.",
-      "The output must look like a standalone story moment, not a photographed book, not an open book, not a printed page, not a collage, not a two-page spread.",
-      "Do not include any written words, letters, numbers, handwriting, handwriting-like scribbles, fake gibberish text, captions, subtitles, storefront signs, street signs.",
-      "No labels, arrows, callouts, tooltips, infographics, color-palette stripes, typography in any script, meme captions, meme UI, meme stickers.",
-      "No speech bubbles containing text — if mouths move, imply speech visually only without letters.",
-      "Use the same character proportions, colors, clothing/accessories, face shapes, and silhouettes in every scene.",
-      "Keep camera style consistent: medium-wide child-friendly composition, soft watercolor texture, rounded toy-like characters, warm pastel lighting.",
-    ].join(" "),
+    artDirection,
+    sceneDirection,
     storyBible.characterDesigns
       ? `Use these exact recurring character designs in every image: ${storyBible.characterDesigns}`
       : "",
@@ -91,6 +193,45 @@ export async function generateSceneImage(
   ]
     .filter(Boolean)
     .join("\n");
+
+  if (options?.childReferenceImage) {
+    try {
+      const referencedImage = await generateSceneImageFromChildReference(
+        openai,
+        prompt,
+        options.childReferenceImage,
+        options.imageQualityTier,
+        isPixar,
+      );
+      if (referencedImage) return referencedImage;
+    } catch (error) {
+      console.error("OpenAI reference image generation failed", error);
+    }
+  }
+
+  if (isPixar) {
+    const params = pixarImageGenerationParams();
+    try {
+      const result = await openai.images.generate({
+        ...params,
+        prompt,
+      });
+
+      const image = result.data?.[0];
+      if (image?.b64_json) {
+        return `data:image/png;base64,${image.b64_json}`;
+      }
+
+      if (image?.url) {
+        return await imageUrlToDataUrl(image.url);
+      }
+
+      return PLACEHOLDER_IMAGE;
+    } catch (error) {
+      console.error("OpenAI image generation failed", error);
+      return PLACEHOLDER_IMAGE;
+    }
+  }
 
   const model = resolvedImageModel();
   const trimmedModel = model.trim();
@@ -120,4 +261,47 @@ export async function generateSceneImage(
     console.error("OpenAI image generation failed", error);
     return PLACEHOLDER_IMAGE;
   }
+}
+
+/**
+ * Generate and upload image to Supabase Storage
+ * Returns Supabase Storage URL instead of data URL
+ */
+export async function generateAndUploadStoryImage(
+  scene: Scene,
+  storyBible: StoryBible,
+  storyId: string,
+  sceneIndex: number,
+  options?: {
+    imageQualityTier?: ImageQualityTier;
+    childReference?: ChildReferenceImage;
+    imageStyle?: ImageStyle;
+  }
+): Promise<string> {
+  const dataUrl = await generateSceneImage(scene, storyBible, {
+    imageQualityTier: options?.imageQualityTier,
+    imageStyle: options?.imageStyle,
+    childReferenceImage: options?.childReference,
+  });
+  
+  // If it's just a placeholder, return it as-is
+  if (dataUrl === PLACEHOLDER_IMAGE) {
+    return PLACEHOLDER_IMAGE;
+  }
+  
+  // Convert data URL to blob and upload to Supabase
+  const imageBlob = dataUrlToBlob(dataUrl);
+  if (!imageBlob) {
+    console.error('Failed to convert generated image to blob');
+    return dataUrl; // Fallback to data URL
+  }
+  
+  const uploadedUrl = await uploadStoryImage(imageBlob, storyId, sceneIndex);
+  if (!uploadedUrl) {
+    console.warn('Failed to upload image to Supabase, using data URL');
+    return dataUrl; // Fallback to data URL
+  }
+  
+  console.log(`Image uploaded to Supabase Storage: ${uploadedUrl}`);
+  return uploadedUrl;
 }
