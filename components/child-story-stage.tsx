@@ -6,13 +6,13 @@ import {
   AudioLines,
   BookOpen,
   Home,
-  LoaderCircle,
   Mic,
   Pause,
   Play,
 } from "lucide-react";
 import { VoiceOrb } from "@/components/voice-orb";
 import { StorypopLogo } from "@/components/storypop-logo";
+import { MagicLoadingScreen } from "@/components/magic-loading-screen";
 import type {
   NarrationLine,
   Scene,
@@ -21,6 +21,7 @@ import type {
   VoiceCastMember,
   VoiceTrait,
 } from "@/lib/story-schema";
+import { saveStoryToBrowser } from "@/lib/story-storage";
 import {
   DEFAULT_STORY_SETTINGS,
   loadStorySettings,
@@ -392,6 +393,9 @@ export function ChildStoryStage() {
               sessionId: storySession.id,
               sceneId: scene.id,
               imageQualityTier: parentSettings.imageQualityTier,
+              imageStyle: parentSettings.imageStyle,
+              useChildAsProtagonist: parentSettings.useChildAsProtagonist,
+              childFaceDataUrl: parentSettings.childFaceDataUrl,
             }),
           });
 
@@ -425,7 +429,12 @@ export function ChildStoryStage() {
       imagePromiseCacheRef.current.set(scene.id, promise);
       return promise;
     },
-    [parentSettings.imageQualityTier],
+    [
+      parentSettings.childFaceDataUrl,
+      parentSettings.imageQualityTier,
+      parentSettings.imageStyle,
+      parentSettings.useChildAsProtagonist,
+    ],
   );
 
   const preloadStoryAssets = useCallback(
@@ -468,7 +477,10 @@ export function ChildStoryStage() {
 
   const waitForInitialImages = useCallback(
     async (storySession: StorySession) => {
-      const targetReadyCount = Math.max(1, Math.ceil(storySession.scenes.length * 0.6));
+      const targetReadyCount =
+        parentSettings.imageStyle === "disney-pixar"
+          ? storySession.scenes.length
+          : Math.max(1, Math.ceil(storySession.scenes.length * 0.6));
       const scenesToPrepare = storySession.scenes.slice(0, targetReadyCount);
 
       for (let index = 0; index < scenesToPrepare.length; index += 1) {
@@ -479,7 +491,7 @@ export function ChildStoryStage() {
 
       setCaption(`Painting your book... ${targetReadyCount}/${targetReadyCount}`);
     },
-    [waitForSceneImage],
+    [parentSettings.imageStyle, waitForSceneImage],
   );
 
   const playLine = useCallback(
@@ -604,6 +616,7 @@ export function ChildStoryStage() {
           body: JSON.stringify({
             childName: parentSettings.childName.trim() || DEFAULT_STORY_SETTINGS.childName,
             childAgeRange: parentSettings.childAgeRange,
+            useChildAsProtagonist: parentSettings.useChildAsProtagonist,
             storyEnergy: parentSettings.storyEnergy,
             transcript: trimmedTranscript,
             sessionId: session?.id,
@@ -624,6 +637,8 @@ export function ChildStoryStage() {
         const data = (await response.json()) as StoryTurnResponse;
         if (shouldStopStory(runId)) return;
         setSession(data.session);
+        // Save story to browser storage as backup
+        saveStoryToBrowser(data.session);
         preloadStoryAssets(data.session);
         if (!data.session.scenes.length) {
           throw new Error("Story has no scenes");
@@ -653,6 +668,7 @@ export function ChildStoryStage() {
       parentSettings.childAgeRange,
       parentSettings.childName,
       parentSettings.storyEnergy,
+      parentSettings.useChildAsProtagonist,
       session,
       shouldStopStory,
       speakNarrator,
@@ -923,6 +939,7 @@ export function ChildStoryStage() {
             : "stage stage-home"
       }
     >
+      {showGeneratingScreen ? <MagicLoadingScreen caption={caption} /> : null}
       <section
         className={
           currentScene
@@ -932,6 +949,7 @@ export function ChildStoryStage() {
               : "storybook-page app-screen"
         }
         aria-live="polite"
+        aria-hidden={showGeneratingScreen ? true : undefined}
       >
         <span className="sky cloud cloud-one" />
         <span className="sky cloud cloud-two" />
@@ -1024,18 +1042,7 @@ export function ChildStoryStage() {
               </div>
             </div>
           </div>
-        ) : showGeneratingScreen ? (
-          <section className="minimal-loading" aria-label="Generating your story">
-            <div className="loading-emojis" aria-hidden="true">
-              <span>📖</span>
-              <span>✨</span>
-              <span>🎨</span>
-            </div>
-            <LoaderCircle className="loading-spinner" size={68} strokeWidth={2.2} />
-            <h1>Making your book</h1>
-            <p>{caption}</p>
-          </section>
-        ) : (
+        ) : showGeneratingScreen ? null : (
           <div className={`home-screen home-screen-${screenState}`}>
             {hasStarted ? (
               <section className="hero-copy">

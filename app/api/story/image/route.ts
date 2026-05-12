@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import {
-  generateSceneImage,
+  generateAndUploadStoryImage,
   isPlaceholderImageUrl,
   looksLikeExpiredProneImageUrl,
 } from "@/lib/image-provider";
 import { memoryStories } from "@/lib/memory-store";
 import type { ImageQualityTier } from "@/lib/openai-model-config";
+import { type ImageStyle, imageStyleSchema } from "@/lib/story-settings";
 import { getStorySession, saveStorySession } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -17,16 +18,27 @@ export async function POST(request: Request) {
     sessionId?: string;
     sceneId?: string;
     imageQualityTier?: ImageQualityTier;
+    imageStyle?: ImageStyle;
+    useChildAsProtagonist?: boolean;
+    childFaceDataUrl?: string;
   };
 
   if (!body.sessionId || !body.sceneId) {
     return NextResponse.json({ error: "Missing sessionId or sceneId" }, { status: 400 });
   }
 
-  const imageQualityTier =
+  const parsedImageStyle = imageStyleSchema.safeParse(body.imageStyle);
+  const imageStyle: ImageStyle | undefined = parsedImageStyle.success
+    ? parsedImageStyle.data
+    : undefined;
+
+  const requestedTier =
     body.imageQualityTier && IMAGE_TIERS.has(body.imageQualityTier)
       ? body.imageQualityTier
       : undefined;
+  // Pixar style is always max quality; ignore any user-supplied tier.
+  const imageQualityTier: ImageQualityTier | undefined =
+    imageStyle === "disney-pixar" ? "high" : requestedTier;
 
   const session = memoryStories.get(body.sessionId) || (await getStorySession(body.sessionId));
   if (!session) {
@@ -43,7 +55,24 @@ export async function POST(request: Request) {
     isPlaceholderImageUrl(scene.imageUrl) ||
     looksLikeExpiredProneImageUrl(scene.imageUrl)
   ) {
-    scene.imageUrl = await generateSceneImage(scene, session.storyBible, { imageQualityTier });
+    const sceneIndex = session.scenes.findIndex(s => s.id === scene.id);
+    scene.imageUrl = await generateAndUploadStoryImage(
+      scene,
+      session.storyBible,
+      session.id,
+      sceneIndex,
+      {
+        imageQualityTier,
+        imageStyle,
+        childReference:
+          body.useChildAsProtagonist && body.childFaceDataUrl
+            ? {
+                childName: session.childProfile.name,
+                faceDataUrl: body.childFaceDataUrl,
+              }
+            : undefined,
+      }
+    );
     session.updatedAt = new Date().toISOString();
     memoryStories.set(session.id, session);
     await saveStorySession(session);

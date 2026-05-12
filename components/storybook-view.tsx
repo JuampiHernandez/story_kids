@@ -1,5 +1,8 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { BookOpen, Clock, Home, Sparkles, Star } from "lucide-react";
+import { ArrowLeft, BookOpen, Clock, Home, Sparkles, Star } from "lucide-react";
 import { StorypopLogo } from "@/components/storypop-logo";
 import { StoryAudioPlayer } from "@/components/story-audio-player";
 import { StorySceneImage } from "@/components/story-scene-image";
@@ -11,15 +14,22 @@ type StorybookViewProps = {
 };
 
 export function StorybookView({ session }: StorybookViewProps) {
+  const [activeSceneId, setActiveSceneId] = useState<string | null>(null);
+  const sceneRefs = useRef<Map<string, HTMLElement>>(new Map());
   return (
     <main className="storybook-view">
       <div className="storybook-shell app-screen library-screen">
         <span className="sky cloud cloud-one" />
         <span className="sky cloud cloud-two" />
-        <header className="app-topbar">
+        <header className="app-topbar library-topbar-balanced">
+          <Link className="library-screen-back" href="/stories" aria-label="Back to story library">
+            <ArrowLeft size={22} strokeWidth={2.4} />
+            Back
+          </Link>
           <Link className="brand-lockup" href="/" aria-label="Storypop home">
             <StorypopLogo className="storypop-logo" />
           </Link>
+          <span className="library-topbar-tail" aria-hidden />
         </header>
 
         <header className="storybook-header">
@@ -36,12 +46,33 @@ export function StorybookView({ session }: StorybookViewProps) {
               <Sparkles size={18} /> AI narrated
             </span>
           </div>
-          <StoryAudioPlayer session={session} />
+          <StoryAudioPlayer 
+            session={session} 
+            onSceneChange={(sceneId) => {
+              setActiveSceneId(sceneId);
+              if (sceneId) {
+                const element = sceneRefs.current.get(sceneId);
+                if (element) {
+                  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+              }
+            }}
+          />
         </header>
 
         <section className="storybook-grid">
           {session.scenes.map((scene, index) => (
-            <article className="storybook-scene" key={scene.id}>
+            <article 
+              className={`storybook-scene ${activeSceneId === scene.id ? 'active' : ''}`} 
+              key={scene.id}
+              ref={(el) => {
+                if (el) {
+                  sceneRefs.current.set(scene.id, el);
+                } else {
+                  sceneRefs.current.delete(scene.id);
+                }
+              }}
+            >
               <div className="scene-cover">
                 {hasGeneratedStoryImageUrl(scene.imageUrl) ? (
                   <StorySceneImage
@@ -61,8 +92,8 @@ export function StorybookView({ session }: StorybookViewProps) {
               </div>
               <div>
                 <h2>{scene.title}</h2>
-                {scene.lines.map((line, index) => (
-                  <p key={`${scene.id}-${line.speakerId}-${index}`}>
+                {scene.lines.map((line, lineIndex) => (
+                  <p key={`${scene.id}-${line.speakerId}-${lineIndex}`}>
                     <strong>{line.speakerName}:</strong> {line.text}
                   </p>
                 ))}
@@ -72,7 +103,7 @@ export function StorybookView({ session }: StorybookViewProps) {
         </section>
 
         <nav className="bottom-nav" aria-label="Primary">
-          <Link href="/">
+          <Link href="/play">
             <Home size={27} fill="currentColor" />
             home
           </Link>

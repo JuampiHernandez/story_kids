@@ -1,5 +1,7 @@
+import { isPlaceholderImageUrl } from "./image-provider";
+
 export function isPlaceholderStoryImageUrl(imageUrl?: string) {
-  return Boolean(imageUrl?.startsWith("data:image/svg+xml") && imageUrl.includes("Toddler%20Tales"));
+  return isPlaceholderImageUrl(imageUrl);
 }
 
 function looksLikeExpiredProneImageUrl(imageUrl: string) {

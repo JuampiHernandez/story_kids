@@ -1,0 +1,77 @@
+---
+description: npm/pnpm supply-chain safety rules for this project
+alwaysApply: true
+---
+
+# Dependency Hygiene (Supply-Chain Defense)
+
+Context: This project lives in an ecosystem where npm worms (Shai-Hulud,
+Mini Shai-Hulud, TeamPCP) have repeatedly poisoned popular packages —
+@tanstack/*, @opensearch-project/opensearch, @mistralai/*, @squawk/*,
+guardrails-ai, plus historical hits on chalk/debug/ansi-styles/color-name.
+Malicious versions typically live on the registry for 1–6 hours before
+takedown. A simple time delay defeats almost all of them.
+
+## Rules when adding, updating, or installing dependencies
+
+1. **Prefer pnpm over npm/yarn.** If the repo still has `package-lock.json`
+   and no `pnpm-lock.yaml`, suggest migrating before adding new deps:
+   ```bash
+   npm i -g pnpm@latest
+   rm package-lock.json
+   pnpm import      # preserves resolved versions from the npm lockfile
+   pnpm install
+   ```
+
+2. **Always enforce a release-age delay.** The repo's `.npmrc` (or
+   `pnpm-workspace.yaml`) must contain:
+   ```ini
+   minimum-release-age=1440
+   ```
+   That's a 24-hour quarantine. Do not lower it without explicit approval.
+   If a user requests a brand-new package version <24h old, push back and
+   recommend either waiting or pinning the prior version.
+
+3. **Never pass `--ignore-scripts=false` or re-enable lifecycle scripts**
+   without an explicit reason. pnpm blocks postinstall scripts by default —
+   keep it that way. If a dep genuinely needs a build step (sharp,
+   unrs-resolver, etc.), allow it via `onlyBuiltDependencies` in
+   `pnpm-workspace.yaml`, never globally.
+
+4. **Use `pnpm ci` / `pnpm install --frozen-lockfile` in CI**, never a bare
+   `pnpm install` that can resolve to a newer version.
+
+5. **When pulling in a new dep, do a quick reality check:**
+   - Is the package <90 days old? Treat with suspicion.
+   - Does its homepage / repo match the package name?
+   - Is the maintainer a high-profile target? (`@tanstack/*`, `@vercel/*`,
+     `next`, `react`, anything with >1M weekly downloads — these are
+     active worm targets.)
+
+6. **Never run `npm install <random-name>` to "see what it does."** If
+   the user asks to evaluate an unknown package, read the tarball
+   contents from `npm view <pkg> dist.tarball` first, or sandbox the
+   install elsewhere.
+
+7. **Do not commit, log, or echo the contents of `.env`, `~/.npmrc`,
+   `~/.gitconfig`, or any token-bearing file** when investigating
+   suspicious behavior. Shai-Hulud's payload exfiltrates exactly these.
+
+## Quick triage if a compromise is suspected
+
+```bash
+# Did any current install match a known bad version?
+npx -y @socketsecurity/cli scan
+# Or use the community detector:
+git clone https://github.com/Cobenian/shai-hulud-detect
+bash shai-hulud-detect/detect.sh
+
+# Host IoCs to check on macOS:
+ls ~/Library/LaunchAgents/com.user.gh-token-monitor.plist
+ls ~/.local/bin/gh-token-monitor.sh
+ls /tmp/transformers.pyz
+grep -i git-tanstack /etc/hosts
+```
+
+Any hit = treat the machine as compromised: rotate GitHub/npm/cloud
+tokens immediately, then clean.

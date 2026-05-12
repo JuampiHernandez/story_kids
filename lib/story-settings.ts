@@ -4,9 +4,20 @@ export const STORY_SETTINGS_STORAGE_KEY = "storypop-parent-settings-v1";
 
 export const STORY_SETTINGS_CHANGED_EVENT = "storypop-settings-changed";
 
+export const imageStyleSchema = z.enum(["watercolor", "disney-pixar"]);
+
+export type ImageStyle = z.infer<typeof imageStyleSchema>;
+
 export const storyParentSettingsSchema = z.object({
   childName: z.string().min(1).max(48).trim(),
+  useChildAsProtagonist: z.boolean().default(false),
+  childFaceDataUrl: z
+    .string()
+    .regex(/^data:image\/(png|jpeg|jpg|webp);base64,/)
+    .max(900_000)
+    .optional(),
   imageQualityTier: z.enum(["low", "medium", "high"]),
+  imageStyle: imageStyleSchema.default("watercolor"),
   childAgeRange: z.enum(["2-3", "4-5", "6-7"]),
   speechLocale: z.string().min(2).max(24),
   storyEnergy: z.enum(["calm", "balanced", "silly"]),
@@ -16,7 +27,10 @@ export type StoryParentSettings = z.infer<typeof storyParentSettingsSchema>;
 
 export const DEFAULT_STORY_SETTINGS: StoryParentSettings = {
   childName: "Luna",
+  useChildAsProtagonist: false,
+  childFaceDataUrl: undefined,
   imageQualityTier: "medium",
+  imageStyle: "watercolor",
   childAgeRange: "4-5",
   speechLocale: "en-US",
   storyEnergy: "balanced",

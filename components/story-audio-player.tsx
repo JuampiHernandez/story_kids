@@ -8,19 +8,29 @@ type PlayerState = "idle" | "loading" | "playing" | "paused";
 
 type StoryAudioPlayerProps = {
   session: StorySession;
+  onSceneChange?: (sceneId: string | null) => void;
 };
 
-export function StoryAudioPlayer({ session }: StoryAudioPlayerProps) {
+export function StoryAudioPlayer({ session, onSceneChange }: StoryAudioPlayerProps) {
   const [state, setState] = useState<PlayerState>("idle");
   const [nowPlaying, setNowPlaying] = useState("Ready to play this story aloud.");
+  const [currentSceneNumber, setCurrentSceneNumber] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const runRef = useRef(0);
   const audioCacheRef = useRef(new Map<string, string>());
+  const isPausedRef = useRef(false);
 
   const fetchLineAudio = useCallback(
     async (sceneIndex: number, lineIndex: number) => {
       const scene = session.scenes[sceneIndex];
       const line = scene.lines[lineIndex];
+      
+      // If the line already has a stored audio URL, use it directly
+      if (line.audioUrl) {
+        return line.audioUrl;
+      }
+
+      // Fallback to generating audio on-demand using the TTS API
       const cacheKey = `${scene.id}:${lineIndex}`;
       const cachedUrl = audioCacheRef.current.get(cacheKey);
       if (cachedUrl) return cachedUrl;
@@ -63,14 +73,48 @@ export function StoryAudioPlayer({ session }: StoryAudioPlayerProps) {
 
   const stop = useCallback(() => {
     runRef.current += 1;
+    isPausedRef.current = false;
     audioRef.current?.pause();
     audioRef.current = null;
     setState("idle");
     setNowPlaying("Ready to play this story aloud.");
+    setCurrentSceneNumber(null);
+    onSceneChange?.(null);
+  }, [onSceneChange]);
+
+  const waitUntilResumed = useCallback(() => {
+    return new Promise<void>((resolve) => {
+      if (!isPausedRef.current) {
+        resolve();
+        return;
+      }
+
+      const checkResumed = () => {
+        if (!isPausedRef.current) {
+          resolve();
+        } else {
+          setTimeout(checkResumed, 100);
+        }
+      };
+      checkResumed();
+    });
   }, []);
+
+  const pausableDelay = useCallback(async (ms: number, runId: number) => {
+    const startTime = Date.now();
+    while (Date.now() - startTime < ms) {
+      if (runRef.current !== runId) return;
+      await waitUntilResumed();
+      if (runRef.current !== runId) return;
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(100, ms - (Date.now() - startTime))),
+      );
+    }
+  }, [waitUntilResumed]);
 
   const play = useCallback(async () => {
     if (state === "paused") {
+      isPausedRef.current = false;
       setState("playing");
       void audioRef.current?.play();
       return;
@@ -78,23 +122,61 @@ export function StoryAudioPlayer({ session }: StoryAudioPlayerProps) {
 
     const runId = runRef.current + 1;
     runRef.current = runId;
+    isPausedRef.current = false;
 
     try {
       setState("loading");
+      
       for (let sceneIndex = 0; sceneIndex < session.scenes.length; sceneIndex += 1) {
         const scene = session.scenes[sceneIndex];
+        let previousSpeakerId: string | null = null;
+
+        // Notify about scene change
+        onSceneChange?.(scene.id);
+        setCurrentSceneNumber(scene.sceneNumber);
+
+        // Add a longer pause between scenes
+        if (sceneIndex > 0) {
+          if (runRef.current !== runId) return;
+          await pausableDelay(800, runId);
+          if (runRef.current !== runId) return;
+        }
 
         for (let lineIndex = 0; lineIndex < scene.lines.length; lineIndex += 1) {
           if (runRef.current !== runId) return;
+          await waitUntilResumed();
+          if (runRef.current !== runId) return;
+          
           const line = scene.lines[lineIndex];
+          
+          // Add pause between different speakers to improve pacing
+          if (previousSpeakerId !== null && previousSpeakerId !== line.speakerId) {
+            await pausableDelay(600, runId);
+            if (runRef.current !== runId) return;
+          }
+          
           setNowPlaying(`${line.speakerName}: ${line.text}`);
 
           const url = await fetchLineAudio(sceneIndex, lineIndex);
           if (runRef.current !== runId) return;
-          if (!url) continue;
+          await waitUntilResumed();
+          if (runRef.current !== runId) return;
+          
+          if (!url) {
+            // Add a small pause even for failed audio
+            await pausableDelay(300, runId);
+            previousSpeakerId = line.speakerId;
+            continue;
+          }
 
           setState("playing");
           await playAudioUrl(url);
+          
+          // Add a small pause after each line for better pacing
+          await pausableDelay(200, runId);
+          if (runRef.current !== runId) return;
+          
+          previousSpeakerId = line.speakerId;
         }
       }
 
@@ -103,9 +185,10 @@ export function StoryAudioPlayer({ session }: StoryAudioPlayerProps) {
       console.error("Story replay failed", error);
       stop();
     }
-  }, [fetchLineAudio, playAudioUrl, session.scenes, state, stop]);
+  }, [fetchLineAudio, playAudioUrl, session.scenes, state, stop, pausableDelay, waitUntilResumed]);
 
   const pause = useCallback(() => {
+    isPausedRef.current = true;
     audioRef.current?.pause();
     setState("paused");
   }, []);
@@ -143,7 +226,14 @@ export function StoryAudioPlayer({ session }: StoryAudioPlayerProps) {
           stop
         </button>
       ) : null}
-      <p>{nowPlaying}</p>
+      <div className="story-player-status">
+        {currentSceneNumber && (
+          <div className="scene-indicator">
+            Page {currentSceneNumber} of {session.scenes.length}
+          </div>
+        )}
+        <p>{nowPlaying}</p>
+      </div>
     </section>
   );
 }
