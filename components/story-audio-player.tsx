@@ -82,6 +82,36 @@ export function StoryAudioPlayer({ session, onSceneChange }: StoryAudioPlayerPro
     onSceneChange?.(null);
   }, [onSceneChange]);
 
+  const waitUntilResumed = useCallback(() => {
+    return new Promise<void>((resolve) => {
+      if (!isPausedRef.current) {
+        resolve();
+        return;
+      }
+
+      const checkResumed = () => {
+        if (!isPausedRef.current) {
+          resolve();
+        } else {
+          setTimeout(checkResumed, 100);
+        }
+      };
+      checkResumed();
+    });
+  }, []);
+
+  const pausableDelay = useCallback(async (ms: number, runId: number) => {
+    const startTime = Date.now();
+    while (Date.now() - startTime < ms) {
+      if (runRef.current !== runId) return;
+      await waitUntilResumed();
+      if (runRef.current !== runId) return;
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(100, ms - (Date.now() - startTime))),
+      );
+    }
+  }, [waitUntilResumed]);
+
   const play = useCallback(async () => {
     if (state === "paused") {
       isPausedRef.current = false;
@@ -156,34 +186,6 @@ export function StoryAudioPlayer({ session, onSceneChange }: StoryAudioPlayerPro
       stop();
     }
   }, [fetchLineAudio, playAudioUrl, session.scenes, state, stop, pausableDelay, waitUntilResumed]);
-
-  const waitUntilResumed = useCallback(() => {
-    return new Promise<void>((resolve) => {
-      if (!isPausedRef.current) {
-        resolve();
-        return;
-      }
-      
-      const checkResumed = () => {
-        if (!isPausedRef.current) {
-          resolve();
-        } else {
-          setTimeout(checkResumed, 100);
-        }
-      };
-      checkResumed();
-    });
-  }, []);
-
-  const pausableDelay = useCallback(async (ms: number, runId: number) => {
-    const startTime = Date.now();
-    while (Date.now() - startTime < ms) {
-      if (runRef.current !== runId) return;
-      await waitUntilResumed();
-      if (runRef.current !== runId) return;
-      await new Promise(resolve => setTimeout(resolve, Math.min(100, ms - (Date.now() - startTime))));
-    }
-  }, [waitUntilResumed]);
 
   const pause = useCallback(() => {
     isPausedRef.current = true;
