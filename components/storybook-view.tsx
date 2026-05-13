@@ -1,118 +1,187 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, BookOpen, Clock, Home, Sparkles, Star } from "lucide-react";
-import { StorypopLogo } from "@/components/storypop-logo";
+import {
+  ArrowLeft,
+  ArrowRight,
+  BookOpen,
+  ChevronLeft,
+  Home,
+} from "lucide-react";
 import { StoryAudioPlayer } from "@/components/story-audio-player";
 import { StorySceneImage } from "@/components/story-scene-image";
 import { hasGeneratedStoryImageUrl } from "@/lib/story-image-utils";
-import type { StorySession } from "@/lib/story-schema";
+import type { NarrationLine, StorySession } from "@/lib/story-schema";
 
 type StorybookViewProps = {
   session: StorySession;
 };
 
 export function StorybookView({ session }: StorybookViewProps) {
-  const [activeSceneId, setActiveSceneId] = useState<string | null>(null);
-  const sceneRefs = useRef<Map<string, HTMLElement>>(new Map());
-  return (
-    <main className="storybook-view">
-      <div className="storybook-shell app-screen library-screen">
-        <span className="sky cloud cloud-one" />
-        <span className="sky cloud cloud-two" />
-        <header className="app-topbar library-topbar-balanced">
-          <Link className="library-screen-back" href="/stories" aria-label="Back to story library">
-            <ArrowLeft size={22} strokeWidth={2.4} />
-            Back
-          </Link>
-          <Link className="brand-lockup" href="/" aria-label="Storypop home">
-            <StorypopLogo className="storypop-logo" />
-          </Link>
-          <span className="library-topbar-tail" aria-hidden />
-        </header>
+  const [currentPageIndex, setCurrentPageIndex] = useState(0);
+  const [activeLine, setActiveLine] = useState<NarrationLine | null>(null);
+  const [isFavorite, setIsFavorite] = useState(false);
 
-        <header className="storybook-header">
-          <p className="eyebrow">my books</p>
-          <h1>{session.storyBible.protagonist}&apos;s Story</h1>
-          <div className="library-meta">
-            <span>
-              <Clock size={18} /> 4 min
+  const currentScene = session.scenes[currentPageIndex] || session.scenes[0];
+  const totalPages = session.scenes.length;
+
+  const goToPage = useCallback((index: number) => {
+    if (index >= 0 && index < totalPages) {
+      setCurrentPageIndex(index);
+    }
+  }, [totalPages]);
+
+  const handleSceneChange = useCallback((sceneId: string | null) => {
+    if (sceneId) {
+      const idx = session.scenes.findIndex((s) => s.id === sceneId);
+      if (idx >= 0) setCurrentPageIndex(idx);
+    }
+  }, [session.scenes]);
+
+  return (
+    <main className="book-view">
+      {/* Decorative floral elements */}
+      <div className="book-decorations" aria-hidden="true">
+        <span className="book-flower book-flower-tl" />
+        <span className="book-flower book-flower-tr" />
+        <span className="book-flower book-flower-bl" />
+        <span className="book-flower book-flower-br" />
+        <span className="book-leaf book-leaf-l" />
+        <span className="book-leaf book-leaf-r" />
+      </div>
+
+      {/* Top bar */}
+      <header className="book-topbar">
+        <div className="book-topbar-left">
+          <Link href="/stories" className="book-back-btn" aria-label="Back to stories">
+            <ChevronLeft size={20} strokeWidth={2.5} />
+          </Link>
+          <div className="book-character-badge">
+            <span className="book-character-avatar">
+              {(session.storyBible.protagonist || "S").charAt(0).toUpperCase()}
             </span>
-            <span>
-              <BookOpen size={18} /> {session.scenes.length} pages
-            </span>
-            <span>
-              <Sparkles size={18} /> AI narrated
+            <span className="book-character-name">
+              {session.storyBible.protagonist}
             </span>
           </div>
-          <StoryAudioPlayer 
-            session={session} 
-            onSceneChange={(sceneId) => {
-              setActiveSceneId(sceneId);
-              if (sceneId) {
-                const element = sceneRefs.current.get(sceneId);
-                if (element) {
-                  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-              }
-            }}
+        </div>
+
+        <div className="book-topbar-center">
+          <h1 className="book-title">{currentScene?.title || "Story"}</h1>
+          <p className="book-page-indicator">
+            <span className="book-star">★</span> Page {currentPageIndex + 1} of {totalPages} <span className="book-star">★</span>
+          </p>
+        </div>
+
+        <div className="book-topbar-right">
+          <StoryAudioPlayer
+            session={session}
+            onSceneChange={handleSceneChange}
+            onLineChange={(line) => setActiveLine(line?.line || null)}
+            onPlaybackChange={() => {}}
           />
-        </header>
+        </div>
+      </header>
 
-        <section className="storybook-grid">
-          {session.scenes.map((scene, index) => (
-            <article 
-              className={`storybook-scene ${activeSceneId === scene.id ? 'active' : ''}`} 
-              key={scene.id}
-              ref={(el) => {
-                if (el) {
-                  sceneRefs.current.set(scene.id, el);
-                } else {
-                  sceneRefs.current.delete(scene.id);
-                }
-              }}
-            >
-              <div className="scene-cover">
-                {hasGeneratedStoryImageUrl(scene.imageUrl) ? (
-                  <StorySceneImage
-                    src={scene.imageUrl}
-                    alt={scene.title}
-                    width={1024}
-                    height={1024}
-                  />
+      {/* Book spread */}
+      <section className="book-spread">
+        {/* Favorite button */}
+        <button
+          className={`book-favorite-btn ${isFavorite ? "active" : ""}`}
+          onClick={() => setIsFavorite(!isFavorite)}
+          aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+        >
+          ★
+        </button>
+
+        {/* Left page - Illustration */}
+        <div className="book-page book-page-left">
+          <div className="book-page-inner">
+            {hasGeneratedStoryImageUrl(currentScene?.imageUrl) ? (
+              <div className="book-illustration">
+                <StorySceneImage
+                  src={currentScene.imageUrl!}
+                  alt={currentScene.title}
+                  width={1024}
+                  height={1024}
+                />
+              </div>
+            ) : (
+              <div className="book-illustration book-illustration-waiting">
+                <BookOpen size={80} strokeWidth={1.2} />
+              </div>
+            )}
+            {/* Speech bubble overlay */}
+            <div className="book-speech-bubble">
+              <p>
+                {activeLine
+                  ? activeLine.text
+                  : currentScene?.summary || ""}
+              </p>
+              <span className="book-speech-heart">♥</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Book spine */}
+        <div className="book-spine" aria-hidden="true" />
+
+        {/* Right page - Text */}
+        <div className="book-page book-page-right">
+          <div className="book-page-inner book-text-content">
+            {currentScene?.lines.map((line, idx) => (
+              <p
+                key={`${currentScene.id}-${idx}`}
+                className={`book-line ${activeLine === line ? "book-line-active" : ""}`}
+              >
+                {line.speakerId === "narrator" ? (
+                  line.text
                 ) : (
-                  <div className="scene-art scene-art-waiting">
-                    <BookOpen size={86} strokeWidth={1.4} />
-                  </div>
+                  <>
+                    &ldquo;{line.text}&rdquo;{" "}
+                    <span className="book-line-speaker">{line.speakerName} said.</span>
+                  </>
                 )}
-                <span>
-                  <Star size={16} fill="currentColor" /> Page {index + 1}
-                </span>
-              </div>
-              <div>
-                <h2>{scene.title}</h2>
-                {scene.lines.map((line, lineIndex) => (
-                  <p key={`${scene.id}-${line.speakerId}-${lineIndex}`}>
-                    <strong>{line.speakerName}:</strong> {line.text}
-                  </p>
-                ))}
-              </div>
-            </article>
-          ))}
-        </section>
+              </p>
+            ))}
+            <span className="book-page-heart" aria-hidden="true">♡</span>
+          </div>
+          {/* Page corner decoration */}
+          <span className="book-page-sun" aria-hidden="true">☀</span>
+        </div>
+      </section>
 
-        <nav className="bottom-nav" aria-label="Primary">
-          <Link href="/play">
-            <Home size={27} fill="currentColor" />
-            home
-          </Link>
-          <a className="active" href="#top" aria-current="page">
-            <BookOpen size={27} fill="currentColor" />
-            storybook
-          </a>
-        </nav>
-      </div>
+      {/* Bottom navigation */}
+      <nav className="book-bottom-nav" aria-label="Story navigation">
+        <button
+          className="book-nav-btn"
+          onClick={() => goToPage(currentPageIndex - 1)}
+          disabled={currentPageIndex === 0}
+        >
+          <ArrowLeft size={18} />
+          <span>Previous</span>
+        </button>
+
+        <Link href="/play" className="book-nav-btn">
+          <Home size={20} />
+          <span>Home</span>
+        </Link>
+
+        <Link href="/stories" className="book-nav-btn book-nav-active">
+          <BookOpen size={20} fill="currentColor" />
+          <span>Storybook</span>
+        </Link>
+
+        <button
+          className="book-nav-btn"
+          onClick={() => goToPage(currentPageIndex + 1)}
+          disabled={currentPageIndex >= totalPages - 1}
+        >
+          <span>Next</span>
+          <ArrowRight size={18} />
+        </button>
+      </nav>
     </main>
   );
 }

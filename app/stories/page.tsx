@@ -1,21 +1,22 @@
 import Link from "next/link";
-import { ArrowLeft, BookOpen, Clock, Home, Mic, Sparkles } from "lucide-react";
+import { ArrowLeft, BookOpen, Home } from "lucide-react";
 import { StorypopLogo } from "@/components/storypop-logo";
-import { StorySceneImage } from "@/components/story-scene-image";
 import { memoryStories } from "@/lib/memory-store";
-import { hasGeneratedStoryImageUrl } from "@/lib/story-image-utils";
-import { listStorySessions } from "@/lib/supabase";
+import { storySessionToLibraryCard } from "@/lib/story-library";
+import { listStoryLibraryCards } from "@/lib/supabase";
 import { BrowserStoriesLoader } from "@/components/browser-stories-loader";
 
+export const dynamic = "force-dynamic";
+
 export default async function StoriesPage() {
-  const persistedStories = await listStorySessions();
-  const storiesById = new Map(persistedStories.map((story) => [story.id, story]));
+  const persistedStoryCards = await listStoryLibraryCards();
+  const storyCardsById = new Map(persistedStoryCards.map((story) => [story.id, story]));
 
   memoryStories.forEach((story) => {
-    storiesById.set(story.id, story);
+    storyCardsById.set(story.id, storySessionToLibraryCard(story));
   });
 
-  const stories = Array.from(storiesById.values()).sort(
+  const storyCards = Array.from(storyCardsById.values()).sort(
     (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
   );
 
@@ -42,7 +43,7 @@ export default async function StoriesPage() {
         </header>
 
         {/* Client-side component to handle browser storage */}
-        <BrowserStoriesLoader serverStories={stories} />
+        <BrowserStoriesLoader serverStories={storyCards} />
 
         <nav className="bottom-nav" aria-label="Primary">
           <Link href="/play">
