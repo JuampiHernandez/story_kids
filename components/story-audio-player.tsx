@@ -2,16 +2,23 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LoaderCircle, Pause, Play, Square } from "lucide-react";
-import type { StorySession } from "@/lib/story-schema";
+import type { NarrationLine, StorySession } from "@/lib/story-schema";
 
 type PlayerState = "idle" | "loading" | "playing" | "paused";
 
 type StoryAudioPlayerProps = {
   session: StorySession;
   onSceneChange?: (sceneId: string | null) => void;
+  onLineChange?: (line: { sceneId: string; lineIndex: number; line: NarrationLine } | null) => void;
+  onPlaybackChange?: (isReplaying: boolean) => void;
 };
 
-export function StoryAudioPlayer({ session, onSceneChange }: StoryAudioPlayerProps) {
+export function StoryAudioPlayer({
+  session,
+  onSceneChange,
+  onLineChange,
+  onPlaybackChange,
+}: StoryAudioPlayerProps) {
   const [state, setState] = useState<PlayerState>("idle");
   const [nowPlaying, setNowPlaying] = useState("Ready to play this story aloud.");
   const [currentSceneNumber, setCurrentSceneNumber] = useState<number | null>(null);
@@ -80,7 +87,9 @@ export function StoryAudioPlayer({ session, onSceneChange }: StoryAudioPlayerPro
     setNowPlaying("Ready to play this story aloud.");
     setCurrentSceneNumber(null);
     onSceneChange?.(null);
-  }, [onSceneChange]);
+    onLineChange?.(null);
+    onPlaybackChange?.(false);
+  }, [onLineChange, onPlaybackChange, onSceneChange]);
 
   const waitUntilResumed = useCallback(() => {
     return new Promise<void>((resolve) => {
@@ -116,6 +125,7 @@ export function StoryAudioPlayer({ session, onSceneChange }: StoryAudioPlayerPro
     if (state === "paused") {
       isPausedRef.current = false;
       setState("playing");
+      onPlaybackChange?.(true);
       void audioRef.current?.play();
       return;
     }
@@ -126,6 +136,7 @@ export function StoryAudioPlayer({ session, onSceneChange }: StoryAudioPlayerPro
 
     try {
       setState("loading");
+      onPlaybackChange?.(true);
       
       for (let sceneIndex = 0; sceneIndex < session.scenes.length; sceneIndex += 1) {
         const scene = session.scenes[sceneIndex];
@@ -133,6 +144,7 @@ export function StoryAudioPlayer({ session, onSceneChange }: StoryAudioPlayerPro
 
         // Notify about scene change
         onSceneChange?.(scene.id);
+        onLineChange?.(null);
         setCurrentSceneNumber(scene.sceneNumber);
 
         // Add a longer pause between scenes
@@ -148,6 +160,7 @@ export function StoryAudioPlayer({ session, onSceneChange }: StoryAudioPlayerPro
           if (runRef.current !== runId) return;
           
           const line = scene.lines[lineIndex];
+          onLineChange?.({ sceneId: scene.id, lineIndex, line });
           
           // Add pause between different speakers to improve pacing
           if (previousSpeakerId !== null && previousSpeakerId !== line.speakerId) {
@@ -185,7 +198,18 @@ export function StoryAudioPlayer({ session, onSceneChange }: StoryAudioPlayerPro
       console.error("Story replay failed", error);
       stop();
     }
-  }, [fetchLineAudio, playAudioUrl, session.scenes, state, stop, pausableDelay, waitUntilResumed]);
+  }, [
+    fetchLineAudio,
+    onLineChange,
+    onPlaybackChange,
+    onSceneChange,
+    playAudioUrl,
+    session.scenes,
+    state,
+    stop,
+    pausableDelay,
+    waitUntilResumed,
+  ]);
 
   const pause = useCallback(() => {
     isPausedRef.current = true;
