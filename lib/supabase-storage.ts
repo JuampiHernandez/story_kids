@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { StorySession } from "./story-schema";
-import { getSupabaseAdmin } from "./supabase";
+import { getSupabaseAdmin, saveStorySession } from "./supabase";
 
 function getAnonStoryClient(): SupabaseClient | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -173,6 +173,11 @@ async function fetchRemoteImageBlob(url: string): Promise<Blob | null> {
   }
 }
 
+/** Fingerprint persisted scene URLs (used before/after storage migration). */
+export function storySceneImageUrlsKey(session: StorySession): string {
+  return session.scenes.map((scene) => scene.imageUrl ?? "").join("\n");
+}
+
 /**
  * Normalize scene image URLs onto Supabase Storage (data URLs, Azure/OpenAI blobs, unknown non-pinned HTTPS).
  */
@@ -218,6 +223,27 @@ export async function uploadStoryImages(session: StorySession): Promise<StorySes
     ...session,
     scenes: updatedScenes,
   };
+}
+
+/** Hydrate ephemeral image URLs used for reading/preview; persists when the normalized JSON differs. */
+export async function hydratePersistedStoryImages(session: StorySession): Promise<StorySession> {
+  try {
+    const before = storySceneImageUrlsKey(session);
+    const normalized = await uploadStoryImages(session);
+    const after = storySceneImageUrlsKey(normalized);
+
+    if (before !== after) {
+      await saveStorySession({
+        ...normalized,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    return normalized;
+  } catch (error) {
+    console.warn("[hydratePersistedStoryImages] skipped", session.id, error);
+    return session;
+  }
 }
 
 /**

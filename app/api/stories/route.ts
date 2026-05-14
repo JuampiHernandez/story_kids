@@ -1,15 +1,11 @@
 import { NextResponse } from "next/server";
 import { storyQualifiesForCommunityShelf } from "@/lib/story-completeness";
-import { uploadStoryImages } from "@/lib/supabase-storage";
+import { storySceneImageUrlsKey, uploadStoryImages } from "@/lib/supabase-storage";
 import { getAuthSessionUser } from "@/lib/supabase/auth-server";
 import { listCommunityStorySessions, listMyStorySessions, saveStorySession } from "@/lib/supabase";
 import type { StorySession } from "@/lib/story-schema";
 
 export const runtime = "nodejs";
-
-function sceneImageUrlsKey(session: StorySession): string {
-  return session.scenes.map((scene) => scene.imageUrl ?? "").join("\n");
-}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -32,18 +28,19 @@ export async function GET(request: Request) {
 
     for (const row of storiesRaw) {
       try {
-        const before = sceneImageUrlsKey(row);
+        const before = storySceneImageUrlsKey(row);
         const normalized = await uploadStoryImages(row);
-        const after = sceneImageUrlsKey(normalized);
+        const after = storySceneImageUrlsKey(normalized);
 
         if (before !== after && migrationBudget > 0) {
           migrationBudget -= 1;
           const toSave = { ...normalized, updatedAt: new Date().toISOString() };
           const { persisted } = await saveStorySession(toSave, { ownerUserId: user.id });
-          stories.push(persisted ? toSave : row);
-        } else {
-          stories.push(before !== after ? row : normalized);
+          if (!persisted) {
+            console.warn("[api/stories] image migrate save failed", row.id);
+          }
         }
+        stories.push(normalized);
       } catch (error) {
         console.warn("[api/stories] image migrate skipped", row.id, error);
         stories.push(row);
