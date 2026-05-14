@@ -1,3 +1,4 @@
+import { generateText } from "ai";
 import OpenAI, { toFile } from "openai";
 import {
   economyGuestImageGenerationParams,
@@ -10,6 +11,24 @@ import {
 import { ART_STYLE, type Scene, type StoryBible } from "@/lib/story-schema";
 import { dataUrlToBlob, uploadStoryImage } from "@/lib/supabase-storage";
 import type { ImageStyle } from "@/lib/story-settings";
+
+/**
+ * Google's Gemini 2.5 Flash Image (a.k.a. "Nano Banana") routed through the
+ * Vercel AI Gateway. Primary generator for the Disney/Pixar style — about
+ * 4× cheaper than `gpt-image-1` at `quality:high` with comparable subject
+ * integrity per published benchmarks.
+ *
+ * OpenAI Pixar (`images.generate` / `images.edit`) is kept in code but **off by
+ * default** — set `OPENAI_PIXAR_FALLBACK_ENABLED=true` to restore GPT backup.
+ *
+ * Auth: `ai` resolves `AI_GATEWAY_API_KEY` automatically (or `VERCEL_OIDC_TOKEN`
+ * after `vercel env pull`). Vercel adds zero markup over Google's list price.
+ */
+const NANO_BANANA_GATEWAY_MODEL = "google/gemini-2.5-flash-image";
+
+function isOpenAiPixarFallbackEnabled(): boolean {
+  return process.env.OPENAI_PIXAR_FALLBACK_ENABLED?.trim().toLowerCase() === "true";
+}
 
 type ChildReferenceImage = {
   childName: string;
@@ -158,6 +177,61 @@ function openAIAsErrorDetail(error: unknown): string {
   return "";
 }
 
+/**
+ * Render a Pixar-style scene with Nano Banana via Vercel AI Gateway. Returns a
+ * `data:image/...;base64,...` URL on success, or `null` when no Gateway auth is
+ * present or the model returns no image file. When OpenAI Pixar fallback is
+ * disabled (default), the caller throws; when enabled, the caller may use GPT.
+ */
+async function generatePixarSceneImageWithNanoBanana(
+  prompt: string,
+  reference?: ChildReferenceImage,
+): Promise<string | null> {
+  const hasGatewayAuth =
+    Boolean(process.env.AI_GATEWAY_API_KEY?.trim()) ||
+    Boolean(process.env.VERCEL_OIDC_TOKEN?.trim());
+  if (!hasGatewayAuth) return null;
+
+  const referenceImage = reference ? dataUrlToImageBuffer(reference.faceDataUrl) : null;
+  const referenceInstruction = reference
+    ? [
+        "Use the attached child photo only as identity reference.",
+        `The protagonist is ${reference.childName}; preserve their face shape, skin tone, hair, eye shape, and smile while translating into the requested Disney/Pixar style.`,
+        "Do not render the source photo itself, a selfie, a photo frame, or a realistic portrait.",
+      ].join(" ")
+    : "";
+
+  const result = await generateText({
+    model: NANO_BANANA_GATEWAY_MODEL,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: [referenceInstruction, prompt].filter(Boolean).join("\n") },
+          ...(referenceImage
+            ? [
+                {
+                  type: "image" as const,
+                  image: referenceImage.buffer,
+                  mediaType: referenceImage.mimeType,
+                },
+              ]
+            : []),
+        ],
+      },
+    ],
+  });
+
+  for (const file of result.files ?? []) {
+    if (file.mediaType?.startsWith("image/")) {
+      const base64 = Buffer.from(file.uint8Array).toString("base64");
+      return `data:${file.mediaType};base64,${base64}`;
+    }
+  }
+
+  return null;
+}
+
 export async function generateSceneImage(
   scene: Scene,
   storyBible: StoryBible,
@@ -243,7 +317,7 @@ export async function generateSceneImage(
     .filter(Boolean)
     .join("\n");
 
-  if (options?.childReferenceImage) {
+  if (options?.childReferenceImage && !isPixar) {
     try {
       const referencedImage = await generateSceneImageFromChildReference(
         openai,
@@ -259,6 +333,60 @@ export async function generateSceneImage(
   }
 
   if (isPixar) {
+    // Primary: Nano Banana (Gemini 2.5 Flash Image) via AI Gateway.
+    try {
+      const nanoBananaImage = await generatePixarSceneImageWithNanoBanana(
+        prompt,
+        options?.childReferenceImage,
+      );
+      if (nanoBananaImage) return nanoBananaImage;
+      console.warn(
+        options?.childReferenceImage
+          ? "Nano Banana Pixar image returned no image data (with child reference)"
+          : "Nano Banana Pixar image returned no image data",
+      );
+    } catch (error) {
+      console.warn(
+        options?.childReferenceImage
+          ? "Nano Banana Pixar image generation failed (with child reference)"
+          : "Nano Banana Pixar image generation failed",
+        error,
+      );
+    }
+
+    if (!isOpenAiPixarFallbackEnabled()) {
+      console.warn(
+        "OpenAI Pixar fallback is disabled. Set OPENAI_PIXAR_FALLBACK_ENABLED=true to use gpt-image-1 as backup.",
+      );
+      throw new StoryImageGenerationError(
+        "Pixar illustrations require AI Gateway (Gemini / Nano Banana). Configure AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN, or set OPENAI_PIXAR_FALLBACK_ENABLED=true to allow OpenAI gpt-image-1 as a fallback.",
+      );
+    }
+
+    // --- OpenAI Pixar fallback (disabled by default; preserved for emergencies) ---
+    if (options?.childReferenceImage) {
+      try {
+        const referencedImage = await generateSceneImageFromChildReference(
+          openai,
+          prompt,
+          options.childReferenceImage,
+          options.imageQualityTier,
+          true,
+        );
+        if (referencedImage) {
+          console.warn(
+            "Using OpenAI Pixar child-reference fallback after Nano Banana path",
+          );
+          return referencedImage;
+        }
+      } catch (error) {
+        console.warn(
+          "OpenAI Pixar child-reference fallback failed; trying OpenAI text-only Pixar fallback",
+          error,
+        );
+      }
+    }
+
     const params = pixarImageGenerationParams();
     try {
       const result = await openai.images.generate({
