@@ -19,6 +19,7 @@ export function AudioGeneratorButton({ storyId, onComplete }: AudioGeneratorButt
     try {
       const response = await fetch("/api/story/audio", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: storyId, regenerate: false }),
       });

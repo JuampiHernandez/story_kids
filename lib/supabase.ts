@@ -15,15 +15,32 @@ export function getSupabaseAdmin() {
   });
 }
 
-export async function saveStorySession(session: StorySession) {
+export async function saveStorySession(
+  session: StorySession,
+  opts?: { ownerUserId?: string | null },
+) {
   const supabase = getSupabaseAdmin();
   if (!supabase) return { persisted: false };
+
+  let user_id: string | null;
+
+  if (opts?.ownerUserId !== undefined) {
+    user_id = opts.ownerUserId;
+  } else {
+    const { data: existing } = await supabase
+      .from("toddler_tales_stories")
+      .select("user_id")
+      .eq("id", session.id)
+      .maybeSingle();
+    user_id = existing?.user_id ?? null;
+  }
 
   const { error } = await supabase.from("toddler_tales_stories").upsert({
     id: session.id,
     child_name: session.childProfile.name,
     status: session.status,
     session,
+    user_id,
   });
 
   if (error) {
@@ -52,7 +69,11 @@ export async function getStorySession(id: string) {
   return data.session as StorySession;
 }
 
-export async function listStorySessions() {
+/**
+ * Full bookshelf for the **Community** tab: every persisted story in Supabase.
+ * (Filtering only anonymous rows hid stories saved while signed in — e.g. “Sunny the snake”.)
+ */
+export async function listCommunityStorySessions(): Promise<StorySession[]> {
   const supabase = getSupabaseAdmin();
   if (!supabase) return [];
 
@@ -63,7 +84,7 @@ export async function listStorySessions() {
     .limit(20);
 
   if (error) {
-    console.error("Failed to list story sessions", error);
+    console.error("Failed to list community story sessions", error);
     return [];
   }
 
@@ -106,4 +127,62 @@ export async function listStoryLibraryCards(): Promise<StoryLibraryCard[]> {
     coverTitle: row.cover_title || row.title || "Story cover",
     updatedAt: row.updated_at || new Date(0).toISOString(),
   }));
+}
+
+export async function listMyStorySessions(userId: string): Promise<StorySession[]> {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from("toddler_tales_stories")
+    .select("session")
+    .eq("user_id", userId);
+
+  if (error) {
+    console.error("Failed to list user story sessions", error);
+    return [];
+  }
+
+  return data
+    .map((row) => row.session as StorySession)
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+}
+
+/** Attach rows whose `user_id` is still null so signed-in parents see tales created before cookies stuck. */
+export async function claimOrphanStoriesForUser(
+  storyIds: string[],
+  ownerUserId: string,
+): Promise<{ claimed: number; skipped: number }> {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) {
+    return { claimed: 0, skipped: storyIds.length };
+  }
+
+  let claimed = 0;
+  let skipped = 0;
+  const unique = [...new Set(storyIds)].slice(0, 40);
+
+  for (const id of unique) {
+    const { data: row, error } = await supabase
+      .from("toddler_tales_stories")
+      .select("session,user_id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error || !row) {
+      skipped += 1;
+      continue;
+    }
+    if (row.user_id != null) {
+      skipped += 1;
+      continue;
+    }
+
+    const session = row.session as StorySession;
+    const { persisted } = await saveStorySession(session, { ownerUserId });
+    skipped += persisted ? 0 : 1;
+    if (persisted) claimed += 1;
+  }
+
+  return { claimed, skipped };
 }

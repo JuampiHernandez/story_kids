@@ -1,7 +1,8 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { StorySession } from "./story-schema";
+import { getSupabaseAdmin } from "./supabase";
 
-function getSupabaseClient() {
+function getAnonStoryClient(): SupabaseClient | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key =
     typeof window === "undefined"
@@ -9,13 +10,17 @@ function getSupabaseClient() {
       : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!url || !key) {
-    console.error('Supabase credentials missing for storage');
+    console.error("Supabase credentials missing for storage");
     return null;
   }
 
   return createClient(url, key, {
     auth: { persistSession: false },
   });
+}
+
+function getStoryStorageUploader(): SupabaseClient | null {
+  return getSupabaseAdmin() ?? getAnonStoryClient();
 }
 
 // Storage bucket names
@@ -37,7 +42,7 @@ export async function uploadStoryImage(
   storyId: string, 
   sceneIndex: number
 ): Promise<string | null> {
-  const supabase = getSupabaseClient();
+  const supabase = getStoryStorageUploader();
   if (!supabase) return null;
 
   try {
@@ -82,7 +87,7 @@ export async function uploadStoryAudio(
   lineIndex: number,
   speakerId: string
 ): Promise<string | null> {
-  const supabase = getSupabaseClient();
+  const supabase = getStoryStorageUploader();
   if (!supabase) return null;
 
   try {
@@ -136,41 +141,82 @@ export function dataUrlToBlob(dataUrl: string): Blob | null {
   }
 }
 
+function looksLikeExpiredProneAzureBlob(imageUrl: string): boolean {
+  if (!imageUrl.startsWith("http://") && !imageUrl.startsWith("https://")) return false;
+  try {
+    return new URL(imageUrl).hostname.endsWith(".blob.core.windows.net");
+  } catch {
+    return false;
+  }
+}
+
+/** Already on our bucket — safe to persist as "durable". */
+function isSupabasePinnedStoryImageUrl(imageUrl: string): boolean {
+  try {
+    const pathname = new URL(imageUrl).pathname;
+    return (
+      pathname.includes("/storage/v1/object/public/story-images/") ||
+      pathname.includes("/storage/v1/object/sign/story-images/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function fetchRemoteImageBlob(url: string): Promise<Blob | null> {
+  try {
+    const res = await fetch(url, { redirect: "follow" });
+    if (!res.ok) return null;
+    return await res.blob();
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Upload story images from data URLs to Supabase Storage
- * Updates the story session with new URLs
+ * Normalize scene image URLs onto Supabase Storage (data URLs, Azure/OpenAI blobs, unknown non-pinned HTTPS).
  */
 export async function uploadStoryImages(session: StorySession): Promise<StorySession> {
   const updatedScenes = await Promise.all(
     session.scenes.map(async (scene, index) => {
-      // Skip if already uploaded to Supabase (not a data URL)
-      if (!scene.imageUrl || !scene.imageUrl.startsWith('data:')) {
+      if (!scene.imageUrl?.trim()) {
         return scene;
       }
 
-      const imageBlob = dataUrlToBlob(scene.imageUrl);
+      const url = scene.imageUrl.trim();
+
+      if (isSupabasePinnedStoryImageUrl(url) && !looksLikeExpiredProneAzureBlob(url)) {
+        return scene;
+      }
+
+      let imageBlob: Blob | null = null;
+
+      if (url.startsWith("data:")) {
+        imageBlob = dataUrlToBlob(url);
+      } else if (looksLikeExpiredProneAzureBlob(url)) {
+        imageBlob = await fetchRemoteImageBlob(url);
+      }
+
       if (!imageBlob) {
-        console.warn(`Failed to convert scene ${index} image to blob`);
         return scene;
       }
 
       const uploadedUrl = await uploadStoryImage(imageBlob, session.id, index);
       if (!uploadedUrl) {
-        console.warn(`Failed to upload scene ${index} image`);
+        console.warn(`Failed to persist scene ${index} image for story ${session.id}`);
         return scene;
       }
 
-      console.log(`Uploaded scene ${index} image to:`, uploadedUrl);
       return {
         ...scene,
-        imageUrl: uploadedUrl
+        imageUrl: uploadedUrl,
       };
-    })
+    }),
   );
 
   return {
     ...session,
-    scenes: updatedScenes
+    scenes: updatedScenes,
   };
 }
 
@@ -179,7 +225,7 @@ export async function uploadStoryImages(session: StorySession): Promise<StorySes
  * This should be run once during setup
  */
 export async function createStorageBuckets() {
-  const supabase = getSupabaseClient();
+  const supabase = getStoryStorageUploader() ?? getAnonStoryClient();
   if (!supabase) return;
 
   try {
@@ -220,7 +266,7 @@ export async function createStorageBuckets() {
  * Delete all files associated with a story
  */
 export async function deleteStoryAssets(storyId: string) {
-  const supabase = getSupabaseClient();
+  const supabase = getStoryStorageUploader();
   if (!supabase) return;
 
   try {

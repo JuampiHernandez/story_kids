@@ -1,5 +1,6 @@
 import OpenAI, { toFile } from "openai";
 import {
+  economyGuestImageGenerationParams,
   isDallE2Model,
   pixarImageGenerationParams,
   resolvedImageModel,
@@ -63,6 +64,14 @@ export const PLACEHOLDER_IMAGE =
 
 export function isPlaceholderImageUrl(imageUrl?: string) {
   return imageUrl === PLACEHOLDER_IMAGE;
+}
+
+/** Thrown when OpenAI fails or misconfig prevents a real raster image response (never the SVG fallback). */
+export class StoryImageGenerationError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "StoryImageGenerationError";
+  }
 }
 
 function compactForDallE2(prompt: string, scene: Scene, storyBible: StoryBible) {
@@ -142,6 +151,13 @@ async function generateSceneImageFromChildReference(
   return null;
 }
 
+function openAIAsErrorDetail(error: unknown): string {
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+  return "";
+}
+
 export async function generateSceneImage(
   scene: Scene,
   storyBible: StoryBible,
@@ -149,14 +165,47 @@ export async function generateSceneImage(
     imageQualityTier?: ImageQualityTier;
     imageStyle?: ImageStyle;
     childReferenceImage?: ChildReferenceImage;
+    /** Anonymous sessions: capped {@link economyGuestImageGenerationParams} */
+    economyGuestMode?: boolean;
   },
 ) {
-  if (!process.env.OPENAI_API_KEY) {
-    return PLACEHOLDER_IMAGE;
+  if (!process.env.OPENAI_API_KEY?.trim()) {
+    throw new StoryImageGenerationError("OPENAI_API_KEY is not configured");
+  }
+
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  if (options?.economyGuestMode) {
+    const economyPrompt = compactForDallE2("", scene, storyBible);
+    const params = economyGuestImageGenerationParams();
+
+    try {
+      const result = await openai.images.generate({
+        ...params,
+        prompt: economyPrompt,
+      });
+
+      const image = result.data?.[0];
+      if (image?.b64_json) {
+        return `data:image/png;base64,${image.b64_json}`;
+      }
+
+      if (image?.url) {
+        return await imageUrlToDataUrl(image.url);
+      }
+      throw new StoryImageGenerationError("OpenAI Images returned no image data (guest)");
+    } catch (error) {
+      if (error instanceof StoryImageGenerationError) throw error;
+      console.error("OpenAI economy guest image generation failed", error);
+      const detail = openAIAsErrorDetail(error);
+      throw new StoryImageGenerationError(
+        detail ? `Guest image generation failed: ${detail}` : "Guest image generation failed",
+        { cause: error },
+      );
+    }
   }
 
   const isPixar = options?.imageStyle === "disney-pixar";
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   const artDirection = isPixar
     ? PIXAR_ART_STYLE
@@ -225,11 +274,15 @@ export async function generateSceneImage(
       if (image?.url) {
         return await imageUrlToDataUrl(image.url);
       }
-
-      return PLACEHOLDER_IMAGE;
+      throw new StoryImageGenerationError("OpenAI Images returned no image data (Pixar style)");
     } catch (error) {
+      if (error instanceof StoryImageGenerationError) throw error;
       console.error("OpenAI image generation failed", error);
-      return PLACEHOLDER_IMAGE;
+      const detail = openAIAsErrorDetail(error);
+      throw new StoryImageGenerationError(
+        detail ? `Pixar-style image generation failed: ${detail}` : "Pixar-style image generation failed",
+        { cause: error },
+      );
     }
   }
 
@@ -256,10 +309,15 @@ export async function generateSceneImage(
       return await imageUrlToDataUrl(image.url);
     }
 
-    return PLACEHOLDER_IMAGE;
+    throw new StoryImageGenerationError("OpenAI Images returned no image data");
   } catch (error) {
+    if (error instanceof StoryImageGenerationError) throw error;
     console.error("OpenAI image generation failed", error);
-    return PLACEHOLDER_IMAGE;
+    const detail = openAIAsErrorDetail(error);
+    throw new StoryImageGenerationError(
+      detail ? `Image generation failed: ${detail}` : "Image generation failed",
+      { cause: error },
+    );
   }
 }
 
@@ -276,26 +334,22 @@ export async function generateAndUploadStoryImage(
     imageQualityTier?: ImageQualityTier;
     childReference?: ChildReferenceImage;
     imageStyle?: ImageStyle;
-  }
+    economyGuestMode?: boolean;
+  },
 ): Promise<string> {
   const dataUrl = await generateSceneImage(scene, storyBible, {
     imageQualityTier: options?.imageQualityTier,
     imageStyle: options?.imageStyle,
     childReferenceImage: options?.childReference,
+    economyGuestMode: options?.economyGuestMode,
   });
-  
-  // If it's just a placeholder, return it as-is
-  if (dataUrl === PLACEHOLDER_IMAGE) {
-    return PLACEHOLDER_IMAGE;
-  }
-  
+
   // Convert data URL to blob and upload to Supabase
   const imageBlob = dataUrlToBlob(dataUrl);
   if (!imageBlob) {
-    console.error('Failed to convert generated image to blob');
-    return dataUrl; // Fallback to data URL
+    throw new StoryImageGenerationError("Could not decode generated image for upload");
   }
-  
+
   const uploadedUrl = await uploadStoryImage(imageBlob, storyId, sceneIndex);
   if (!uploadedUrl) {
     console.warn('Failed to upload image to Supabase, using data URL');

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { memoryStories } from "@/lib/memory-store";
 import { saveStorySession } from "@/lib/supabase";
+import { getAuthSessionUser } from "@/lib/supabase/auth-server";
 import { uploadStoryImages } from "@/lib/supabase-storage";
 import { advanceStory } from "@/lib/story-engine";
 import { storyTurnRequestSchema } from "@/lib/story-schema";
@@ -35,7 +36,12 @@ export async function POST(request: Request) {
   }
   
   memoryStories.set(sessionWithUploadedImages.id, sessionWithUploadedImages);
-  await saveStorySession(sessionWithUploadedImages);
+
+  const user = await getAuthSessionUser();
+  await saveStorySession(
+    sessionWithUploadedImages,
+    user ? { ownerUserId: user.id } : undefined,
+  );
 
   return NextResponse.json({ ...result, session: sessionWithUploadedImages });
 }

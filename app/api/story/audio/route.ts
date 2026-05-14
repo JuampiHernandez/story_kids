@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { memoryStories } from "@/lib/memory-store";
 import { getStorySession, saveStorySession } from "@/lib/supabase";
+import { getAuthSessionUser } from "@/lib/supabase/auth-server";
 import { preGenerateStoryAudio } from "@/lib/audio-storage";
 
 export const runtime = "nodejs";
@@ -19,6 +20,8 @@ export async function POST(request: Request) {
   if (!session) {
     return NextResponse.json({ error: "Story session not found" }, { status: 404 });
   }
+
+  const user = await getAuthSessionUser();
 
   try {
     // Collect all narration lines from all scenes
@@ -58,7 +61,7 @@ export async function POST(request: Request) {
 
     // Save updated session
     memoryStories.set(updatedSession.id, updatedSession);
-    await saveStorySession(updatedSession);
+    await saveStorySession(updatedSession, user ? { ownerUserId: user.id } : undefined);
 
     const generatedCount = Object.keys(audioUrls).length;
     console.log(`Generated ${generatedCount} audio files for story ${session.id}`);

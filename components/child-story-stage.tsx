@@ -5,22 +5,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AudioLines,
   BookOpen,
+  ChevronLeft,
   Home,
   Mic,
   Pause,
   Play,
+  Settings,
 } from "lucide-react";
 import { VoiceOrb } from "@/components/voice-orb";
 import { StorypopLogo } from "@/components/storypop-logo";
 import { MagicLoadingScreen } from "@/components/magic-loading-screen";
-import type {
-  NarrationLine,
-  Scene,
-  StorySession,
-  StoryTurnResponse,
-  VoiceCastMember,
-  VoiceTrait,
-} from "@/lib/story-schema";
+import { StorybookSpread } from "@/components/storybook-spread";
+import type { NarrationLine, Scene, StorySession, StoryTurnResponse } from "@/lib/story-schema";
 import { saveStoryToBrowser } from "@/lib/story-storage";
 import {
   DEFAULT_STORY_SETTINGS,
@@ -29,70 +25,19 @@ import {
   type StoryParentSettings,
 } from "@/lib/story-settings";
 import { SettingsAvatarLink } from "@/components/settings-avatar-link";
-import { hasGeneratedStoryImageUrl } from "@/lib/story-image-utils";
+import { hasRenderableStoryImageUrl } from "@/lib/story-image-utils";
+import "@/lib/browser-speech-recognition";
+import type {
+  BrowserSpeechRecognitionConstructor,
+  BrowserSpeechRecognitionEvent,
+} from "@/lib/browser-speech-recognition";
 
 type StageMode = "idle" | "listening" | "thinking" | "speaking" | "painting";
-
-type SpeechRecognitionEvent = Event & {
-  results: SpeechRecognitionResultList;
-};
-
-type SpeechRecognitionConstructor = new () => {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onresult: (event: SpeechRecognitionEvent) => void;
-  onend: () => void;
-  onerror: () => void;
-  start: () => void;
-  stop: () => void;
-};
-
-declare global {
-  interface Window {
-    SpeechRecognition?: SpeechRecognitionConstructor;
-    webkitSpeechRecognition?: SpeechRecognitionConstructor;
-    webkitAudioContext?: typeof AudioContext;
-  }
-}
 
 const thinkingPrompt = "Great idea. I’m dreaming up a cool story now.";
 const listenSilenceMs = 1900;
 const minimumListenMs = 4500;
 const maxListenMs = 14000;
-
-const speakerCardClassByTrait: Record<VoiceCastMember["trait"], string> = {
-  narrator: "speaker-card-narrator",
-  brave: "speaker-card-brave",
-  tiny: "speaker-card-tiny",
-  wise: "speaker-card-wise",
-  silly: "speaker-card-silly",
-  gentle: "speaker-card-gentle",
-};
-
-type ActiveSpeaker = Pick<VoiceCastMember, "displayName" | "speakerId"> & {
-  trait: VoiceTrait;
-};
-
-function emojiForSpeaker(speakerId: string, displayName: string, trait: VoiceTrait): string {
-  const id = speakerId.toLowerCase();
-  const hint = `${displayName}`.toLowerCase();
-
-  if (id === "narrator" || trait === "narrator") return "📖";
-  if (trait === "tiny" || /\bbaby\b|\btoddler\b|\btiny\b/.test(hint)) return "👶";
-  if (trait === "wise") return "🦉";
-  if (trait === "silly" || /\bdog\b|\bpupp(y|ies)\b/.test(hint)) return "🐶";
-  if (/\bcat\b|\bkitten\b/.test(hint)) return "🐱";
-  if (trait === "brave") {
-    if (/\bboy\b|\bdad\b|\bgrandpa\b|\bsir\b|\bking\b|\bprince\b|\bwolf\b|\bdragon\b/.test(hint)) {
-      return "👦";
-    }
-
-    return "👧";
-  }
-  if (trait === "gentle") return "🤗";
-  return "✨";
-}
 
 export function ChildStoryStage() {
   const [parentSettings, setParentSettings] = useState<StoryParentSettings>(DEFAULT_STORY_SETTINGS);
@@ -118,7 +63,7 @@ export function ChildStoryStage() {
   const storyRunRef = useRef(0);
   const isPausedRef = useRef(false);
   const resumeWaitersRef = useRef<Array<() => void>>([]);
-  const recognitionRef = useRef<InstanceType<SpeechRecognitionConstructor> | null>(null);
+  const recognitionRef = useRef<InstanceType<BrowserSpeechRecognitionConstructor> | null>(null);
   const silenceTimerRef = useRef<number | null>(null);
   const maxListenTimerRef = useRef<number | null>(null);
   const listeningTranscriptRef = useRef("");
@@ -150,18 +95,6 @@ export function ChildStoryStage() {
     if (!session) return "";
     return `/story/${session.id}`;
   }, [session]);
-
-  const activeSpeaker = useMemo<ActiveSpeaker | null>(() => {
-    if (!activeLine) return null;
-
-    return (
-      session?.voiceCast.find((member) => member.speakerId === activeLine.speakerId) || {
-        speakerId: activeLine.speakerId,
-        displayName: activeLine.speakerName,
-        trait: activeLine.speakerId === "narrator" ? "narrator" : "gentle",
-      }
-    );
-  }, [activeLine, session?.voiceCast]);
 
   const waitUntilResumed = useCallback(
     () =>
@@ -373,7 +306,7 @@ export function ChildStoryStage() {
 
   const requestSceneImage = useCallback(
     async (storySession: StorySession, scene: Scene) => {
-      if (hasGeneratedStoryImageUrl(scene.imageUrl)) {
+      if (hasRenderableStoryImageUrl(scene.imageUrl)) {
         imageUrlBySceneRef.current.set(scene.id, scene.imageUrl);
         return scene.imageUrl;
       }
@@ -399,20 +332,32 @@ export function ChildStoryStage() {
             }),
           });
 
-          if (!response.ok) return null;
+          const payload = (await response.json()) as {
+            error?: string;
+            sceneId?: string;
+            imageUrl?: string;
+          };
 
-          const data = (await response.json()) as { sceneId: string; imageUrl?: string };
-          if (!hasGeneratedStoryImageUrl(data.imageUrl)) return null;
+          if (!response.ok) {
+            if (payload.error) console.error("Story image API:", payload.error);
+            else console.error("Story image API HTTP", response.status);
+            return null;
+          }
+
+          const data = payload as { sceneId: string; imageUrl?: string };
+          if (!hasRenderableStoryImageUrl(data.imageUrl)) return null;
 
           imageUrlBySceneRef.current.set(data.sceneId, data.imageUrl);
           setSession((previous) => {
             if (!previous || previous.id !== storySession.id) return previous;
-            return {
+            const next = {
               ...previous,
               scenes: previous.scenes.map((candidate) =>
                 candidate.id === data.sceneId ? { ...candidate, imageUrl: data.imageUrl } : candidate,
               ),
             };
+            queueMicrotask(() => saveStoryToBrowser(next));
+            return next;
           });
           setCurrentScene((previous) =>
             previous?.id === data.sceneId ? { ...previous, imageUrl: data.imageUrl } : previous,
@@ -459,7 +404,8 @@ export function ChildStoryStage() {
   const waitForSceneImage = useCallback(
     async (storySession: StorySession, scene: Scene) => {
       const cachedUrl =
-        imageUrlBySceneRef.current.get(scene.id) || (hasGeneratedStoryImageUrl(scene.imageUrl) ? scene.imageUrl : null);
+        imageUrlBySceneRef.current.get(scene.id) ||
+        (hasRenderableStoryImageUrl(scene.imageUrl) ? scene.imageUrl : null);
 
       if (cachedUrl) return cachedUrl;
 
@@ -612,6 +558,7 @@ export function ChildStoryStage() {
       try {
         const storyPromise = fetch("/api/story/turn", {
           method: "POST",
+          credentials: "include",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             childName: parentSettings.childName.trim() || DEFAULT_STORY_SETTINGS.childName,
@@ -791,7 +738,7 @@ export function ChildStoryStage() {
       recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = parentSettings.speechLocale;
-      recognition.onresult = (event) => {
+      recognition.onresult = (event: BrowserSpeechRecognitionEvent) => {
         const transcript = Array.from(event.results)
           .map((result) => result[0]?.transcript)
           .join(" ");
@@ -929,185 +876,199 @@ export function ChildStoryStage() {
         : "making"
       : "home";
   const showGeneratingScreen = isGenerating && !currentScene;
+
+  /** Match `/story/[id]` desktop spread layout while narration runs (stacked columns on narrow viewports via shared CSS). */
+  const liveBookReading = Boolean(currentScene && session);
+  const liveScene = session && currentScene ? (session.scenes.find((s) => s.id === currentScene.id) ?? currentScene) : null;
+
   return (
-    <main
-      className={
-        currentScene
-          ? "stage stage-reading"
-          : hasStarted
-            ? "stage stage-home stage-voice-center"
-            : "stage stage-home"
-      }
-    >
+    <>
       {showGeneratingScreen ? <MagicLoadingScreen caption={caption} /> : null}
-      <section
-        className={
-          currentScene
-            ? "storybook-page app-screen app-screen-reading"
-            : showGeneratingScreen
-              ? "storybook-page app-screen app-screen-generating"
-              : "storybook-page app-screen"
-        }
-        aria-live="polite"
-        aria-hidden={showGeneratingScreen ? true : undefined}
-      >
-        <span className="sky cloud cloud-one" />
-        <span className="sky cloud cloud-two" />
-        {!showGeneratingScreen ? (
-          <>
-            <span className="sky sparkle sparkle-one">+</span>
-            <span className="sky sparkle sparkle-two">★</span>
-          </>
-        ) : null}
-        {!currentScene && !showGeneratingScreen ? (
-          <div className="fairy-forest" aria-hidden="true">
-            <span className="fairy-tree fairy-tree-one" />
-            <span className="fairy-tree fairy-tree-two" />
-            <span className="fairy-tree fairy-tree-three" />
-            <span className="fairy-tree fairy-tree-four" />
-            <span className="fairy-firefly fairy-firefly-one" />
-            <span className="fairy-firefly fairy-firefly-two" />
-            <span className="fairy-firefly fairy-firefly-three" />
+
+      {liveBookReading && session && liveScene ? (
+        <main className="book-view book-view-live-reading">
+          <div className="book-decorations" aria-hidden="true">
+            <span className="book-flower book-flower-tl" />
+            <span className="book-flower book-flower-tr" />
+            <span className="book-flower book-flower-bl" />
+            <span className="book-flower book-flower-br" />
+            <span className="book-leaf book-leaf-l" />
+            <span className="book-leaf book-leaf-r" />
           </div>
-        ) : null}
-        <header className="app-topbar">
-          <div className="brand-lockup" aria-label="Storypop">
-            <StorypopLogo className="storypop-logo" />
-          </div>
-          <SettingsAvatarLink />
-        </header>
 
-        {currentScene ? (
-          <div className="reader-screen">
-            <div className="reader-titlebar">
-              <div>
-                <h1>{currentScene.title}</h1>
-                <p>
-                  Page <strong>{currentScene.sceneNumber}</strong> of {sceneCount}
-                </p>
-              </div>
-            </div>
-
-            {hasGeneratedStoryImageUrl(currentScene.imageUrl) ? (
-              <div
-                className="scene-art"
-                style={{ backgroundImage: `url("${currentScene.imageUrl}")` }}
-              />
-            ) : (
-              <div className="scene-art scene-art-waiting">
-                <BookOpen size={110} strokeWidth={1.4} />
-              </div>
-            )}
-
-            <div
-              className={[
-                "reader-copy speaker-card",
-                activeSpeaker ? speakerCardClassByTrait[activeSpeaker.trait] : "speaker-card-narrator",
-              ].join(" ")}
-            >
-              <div className="speaker-avatar" aria-hidden="true">
-                <span className="speaker-emoji">
-                  {emojiForSpeaker(
-                    activeSpeaker?.speakerId || activeLine?.speakerId || "narrator",
-                    activeSpeaker?.displayName || activeLine?.speakerName || "Narrator",
-                    activeSpeaker?.trait || "narrator",
-                  )}
+          <header className="book-topbar">
+            <div className="book-topbar-left">
+              <button
+                type="button"
+                className="book-back-btn"
+                aria-label="Back to play home"
+                onClick={quitToHome}
+              >
+                <ChevronLeft size={20} strokeWidth={2.5} />
+              </button>
+              <div className="book-character-badge">
+                <span className="book-character-avatar">
+                  {(session.storyBible.protagonist || "S").charAt(0).toUpperCase()}
                 </span>
-              </div>
-              <div className="speaker-copy">
-                <span className="speaker-name">{activeSpeaker?.displayName || activeLine?.speakerName || "Narrator"}</span>
-              <p>{caption}</p>
+                <span className="book-character-name">{session.storyBible.protagonist}</span>
               </div>
             </div>
 
-            <div className="read-progress">
-              <span />
-              <div>
-                <span style={{ width: `${Math.max(12, (currentScene.sceneNumber / sceneCount) * 100)}%` }} />
-              </div>
-              <strong>{mode === "speaking" ? "reading aloud" : "warming up"}</strong>
+            <div className="book-topbar-center">
+              <h1 className="book-title">{liveScene.title}</h1>
+              <p className="book-page-indicator">
+                <span className="book-star">★</span> Page {liveScene.sceneNumber} of {sceneCount}{" "}
+                <span className="book-star">★</span>
+              </p>
             </div>
 
-            <div className="reader-controls">
-              <div className="reader-action-group">
+            <div className="book-topbar-right">
+              <Link href="/settings" className="book-settings-btn" aria-label="Parent settings">
+                <Settings size={20} strokeWidth={2.4} />
+              </Link>
+              <div className="story-audio-player" aria-label="Story playback">
                 <button
-                  className="reader-play-toggle"
                   type="button"
-                  onClick={togglePause}
+                  onClick={() => togglePause()}
                   aria-label={isPaused ? "Resume story" : "Pause story"}
                 >
-                  {isPaused ? <Play size={24} fill="currentColor" /> : <Pause size={24} fill="currentColor" />}
+                  {isPaused ? <Play size={22} fill="currentColor" /> : <Pause size={22} fill="currentColor" />}
                   {isPaused ? "play" : "pause"}
                 </button>
               </div>
             </div>
-          </div>
-        ) : showGeneratingScreen ? null : (
-          <div className={`home-screen home-screen-${screenState}`}>
-            {hasStarted ? (
-              <section className="hero-copy">
-                <p className="eyebrow">Storypop</p>
-                <h1>
-                  <>
-                    what should
-                    <br />
-                    happen?
-                  </>
-                </h1>
-                <p>Tell your idea out loud and we will turn it into a story.</p>
-              </section>
+          </header>
+
+          <StorybookSpread scene={liveScene} activeLine={activeLine} />
+
+          {shareUrl ? (
+            <nav className="book-bottom-nav book-bottom-nav-live" aria-label="Primary">
+              <button
+                type="button"
+                className="book-nav-btn"
+                onClick={quitToHome}
+                aria-label="Quit story and return home"
+              >
+                <Home size={20} />
+                home
+              </button>
+              <Link href={shareUrl} className="book-nav-btn book-nav-active">
+                <BookOpen size={20} fill="currentColor" />
+                storybook
+              </Link>
+            </nav>
+          ) : null}
+        </main>
+      ) : (
+        <main
+          className={
+            currentScene ? "stage stage-reading" : "stage stage-home"
+          }
+        >
+          <section
+            className={
+              currentScene
+                ? "storybook-page app-screen app-screen-reading"
+                : showGeneratingScreen
+                  ? "storybook-page app-screen app-screen-generating"
+                  : "storybook-page app-screen"
+            }
+            aria-live="polite"
+            aria-hidden={showGeneratingScreen ? true : undefined}
+          >
+            <span className="sky cloud cloud-one" />
+            <span className="sky cloud cloud-two" />
+            {!showGeneratingScreen ? (
+              <>
+                <span className="sky sparkle sparkle-one">+</span>
+                <span className="sky sparkle sparkle-two">★</span>
+              </>
             ) : null}
+            {!currentScene && !showGeneratingScreen ? (
+              <div className="fairy-forest" aria-hidden="true">
+                <span className="fairy-tree fairy-tree-one" />
+                <span className="fairy-tree fairy-tree-two" />
+                <span className="fairy-tree fairy-tree-three" />
+                <span className="fairy-tree fairy-tree-four" />
+                <span className="fairy-firefly fairy-firefly-one" />
+                <span className="fairy-firefly fairy-firefly-two" />
+                <span className="fairy-firefly fairy-firefly-three" />
+              </div>
+            ) : null}
+            <header className="app-topbar">
+              <div className="brand-lockup" aria-label="Storypop">
+                <StorypopLogo className="storypop-logo" />
+              </div>
+              <SettingsAvatarLink />
+            </header>
 
-            {hasStarted ? (
-              <section className="create-panel">
-                <VoiceOrb mode={mode} />
-                <p className="talk-hint">
-                  <AudioLines size={24} />
-                  {caption}
-                </p>
-                {spokenTranscript ? <span className="transcript-pill">You said: {spokenTranscript}</span> : null}
-                {error ? <strong className="error-pill">{error}</strong> : null}
-              </section>
-            ) : (
-              <section className="home-actions home-actions-simple">
-                <button
-                  className="start-button"
-                  type="button"
-                  onClick={() => void begin()}
-                  aria-label={storyEnded ? "Start a new story" : "Start story"}
-                >
-                  <Mic size={58} />
-                  Start
-                </button>
-                <Link className="library-button" href="/stories">
-                  <BookOpen size={18} />
-                  my books
-                </Link>
-                {error ? <strong className="error-pill">{error}</strong> : null}
-              </section>
+            {showGeneratingScreen ? null : (
+              <div className={`home-screen home-screen-${screenState}`}>
+                {hasStarted ? (
+                  <section className="hero-copy">
+                    <p className="eyebrow">Storypop</p>
+                    <h1>
+                      <>
+                        what should
+                        <br />
+                        happen?
+                      </>
+                    </h1>
+                    <p>Tell your idea out loud and we will turn it into a story.</p>
+                  </section>
+                ) : null}
+
+                {hasStarted ? (
+                  <section className="create-panel">
+                    <VoiceOrb mode={mode} />
+                    <p className="talk-hint">
+                      <AudioLines size={24} />
+                      {caption}
+                    </p>
+                    {spokenTranscript ? <span className="transcript-pill">You said: {spokenTranscript}</span> : null}
+                    {error ? <strong className="error-pill">{error}</strong> : null}
+                  </section>
+                ) : (
+                  <section className="home-actions home-actions-simple">
+                    <button
+                      className="start-button"
+                      type="button"
+                      onClick={() => void begin()}
+                      aria-label={storyEnded ? "Start a new story" : "Start story"}
+                    >
+                      <Mic size={58} />
+                      Start
+                    </button>
+                    <Link className="library-button" href="/stories">
+                      <BookOpen size={18} />
+                      my books
+                    </Link>
+                    {error ? <strong className="error-pill">{error}</strong> : null}
+                  </section>
+                )}
+              </div>
             )}
-          </div>
-        )}
 
-        {shareUrl ? (
-          <nav className="bottom-nav" aria-label="Primary">
-            <button
-              className={screenState === "home" ? "active" : ""}
-              type="button"
-              onClick={quitToHome}
-              aria-label="Quit story and return home"
-            >
-              <Home size={27} fill="currentColor" />
-              home
-            </button>
-            <a className={screenState === "reading" ? "active" : ""} href={shareUrl}>
-              <BookOpen size={27} fill="currentColor" />
-              storybook
-            </a>
-          </nav>
-        ) : null}
-      </section>
-
-    </main>
+            {shareUrl ? (
+              <nav className="bottom-nav" aria-label="Primary">
+                <button
+                  className={screenState === "home" ? "active" : ""}
+                  type="button"
+                  onClick={quitToHome}
+                  aria-label="Quit story and return home"
+                >
+                  <Home size={27} fill="currentColor" />
+                  home
+                </button>
+                <a className={screenState === "reading" ? "active" : ""} href={shareUrl}>
+                  <BookOpen size={27} fill="currentColor" />
+                  storybook
+                </a>
+              </nav>
+            ) : null}
+          </section>
+        </main>
+      )}
+    </>
   );
 }

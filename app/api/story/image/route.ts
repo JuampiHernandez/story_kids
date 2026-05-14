@@ -3,11 +3,14 @@ import {
   generateAndUploadStoryImage,
   isPlaceholderImageUrl,
   looksLikeExpiredProneImageUrl,
+  StoryImageGenerationError,
 } from "@/lib/image-provider";
 import { memoryStories } from "@/lib/memory-store";
 import type { ImageQualityTier } from "@/lib/openai-model-config";
+import { fetchUserPremiumFlag } from "@/lib/supabase-profiles";
 import { type ImageStyle, imageStyleSchema } from "@/lib/story-settings";
 import { getStorySession, saveStorySession } from "@/lib/supabase";
+import { getAuthSessionUser } from "@/lib/supabase/auth-server";
 
 export const runtime = "nodejs";
 
@@ -27,18 +30,45 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing sessionId or sceneId" }, { status: 400 });
   }
 
+  const user = await getAuthSessionUser();
+  const isPremium = user ? await fetchUserPremiumFlag(user.id, user.email ?? undefined) : false;
+
   const parsedImageStyle = imageStyleSchema.safeParse(body.imageStyle);
-  const imageStyle: ImageStyle | undefined = parsedImageStyle.success
-    ? parsedImageStyle.data
-    : undefined;
+  let imageStyle: ImageStyle = parsedImageStyle.success ? parsedImageStyle.data : "watercolor";
 
   const requestedTier =
     body.imageQualityTier && IMAGE_TIERS.has(body.imageQualityTier)
       ? body.imageQualityTier
       : undefined;
-  // Pixar style is always max quality; ignore any user-supplied tier.
-  const imageQualityTier: ImageQualityTier | undefined =
-    imageStyle === "disney-pixar" ? "high" : requestedTier;
+
+  let economyGuestMode = false;
+  let allowChildFace = false;
+  let imageQualityTier: ImageQualityTier | undefined;
+
+  if (!user) {
+    economyGuestMode = true;
+    imageStyle = "watercolor";
+    imageQualityTier = "low";
+    allowChildFace = false;
+  } else {
+    allowChildFace = true;
+
+    if (!isPremium && imageStyle === "disney-pixar") {
+      imageStyle = "watercolor";
+    }
+
+    let tier: ImageQualityTier | undefined = requestedTier;
+
+    if (!isPremium && tier === "high") {
+      tier = "medium";
+    }
+
+    if (imageStyle === "disney-pixar") {
+      tier = "high";
+    }
+
+    imageQualityTier = tier;
+  }
 
   const session = memoryStories.get(body.sessionId) || (await getStorySession(body.sessionId));
   if (!session) {
@@ -55,27 +85,37 @@ export async function POST(request: Request) {
     isPlaceholderImageUrl(scene.imageUrl) ||
     looksLikeExpiredProneImageUrl(scene.imageUrl)
   ) {
-    const sceneIndex = session.scenes.findIndex(s => s.id === scene.id);
-    scene.imageUrl = await generateAndUploadStoryImage(
-      scene,
-      session.storyBible,
-      session.id,
-      sceneIndex,
-      {
-        imageQualityTier,
-        imageStyle,
-        childReference:
-          body.useChildAsProtagonist && body.childFaceDataUrl
-            ? {
-                childName: session.childProfile.name,
-                faceDataUrl: body.childFaceDataUrl,
-              }
-            : undefined,
-      }
-    );
+    const sceneIndex = session.scenes.findIndex((s) => s.id === scene.id);
+    try {
+      scene.imageUrl = await generateAndUploadStoryImage(
+        scene,
+        session.storyBible,
+        session.id,
+        sceneIndex,
+        {
+          imageQualityTier,
+          imageStyle,
+          economyGuestMode,
+          childReference:
+            allowChildFace && body.useChildAsProtagonist && body.childFaceDataUrl
+              ? {
+                  childName: session.childProfile.name,
+                  faceDataUrl: body.childFaceDataUrl,
+                }
+              : undefined,
+        },
+      );
+    } catch (error) {
+      const message =
+        error instanceof StoryImageGenerationError
+          ? error.message
+          : "Image generation failed";
+      console.error("[api/story/image]", error);
+      return NextResponse.json({ error: message }, { status: 502 });
+    }
     session.updatedAt = new Date().toISOString();
     memoryStories.set(session.id, session);
-    await saveStorySession(session);
+    await saveStorySession(session, user ? { ownerUserId: user.id } : undefined);
   }
 
   return NextResponse.json({ sceneId: scene.id, imageUrl: scene.imageUrl });

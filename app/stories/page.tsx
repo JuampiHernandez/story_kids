@@ -1,25 +1,9 @@
 import Link from "next/link";
-import { ArrowLeft, BookOpen, Home } from "lucide-react";
+import { ArrowLeft, BookOpen, Home, Settings } from "lucide-react";
 import { StorypopLogo } from "@/components/storypop-logo";
-import { memoryStories } from "@/lib/memory-store";
-import { storySessionToLibraryCard } from "@/lib/story-library";
-import { listStoryLibraryCards } from "@/lib/supabase";
 import { BrowserStoriesLoader } from "@/components/browser-stories-loader";
 
-export const dynamic = "force-dynamic";
-
-export default async function StoriesPage() {
-  const persistedStoryCards = await listStoryLibraryCards();
-  const storyCardsById = new Map(persistedStoryCards.map((story) => [story.id, story]));
-
-  memoryStories.forEach((story) => {
-    storyCardsById.set(story.id, storySessionToLibraryCard(story));
-  });
-
-  const storyCards = Array.from(storyCardsById.values()).sort(
-    (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
-  );
-
+export default function StoriesPage() {
   return (
     <main className="storybook-view">
       <div className="storybook-shell app-screen library-screen">
@@ -33,17 +17,12 @@ export default async function StoriesPage() {
           <Link className="brand-lockup" href="/" aria-label="Storypop home">
             <StorypopLogo className="storypop-logo" />
           </Link>
-          <span className="library-topbar-tail" aria-hidden />
+          <Link className="library-settings-btn" href="/settings" aria-label="Parent settings">
+            <Settings size={22} strokeWidth={2.4} />
+          </Link>
         </header>
 
-        <header className="storybook-header">
-          <p className="eyebrow">my books</p>
-          <h1>Story Library</h1>
-          <p>Open a saved story and play it again whenever you want.</p>
-        </header>
-
-        {/* Client-side component to handle browser storage */}
-        <BrowserStoriesLoader serverStories={storyCards} />
+        <BrowserStoriesLoader />
 
         <nav className="bottom-nav" aria-label="Primary">
           <Link href="/play">
