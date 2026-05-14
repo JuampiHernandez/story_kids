@@ -4,7 +4,8 @@ export function isPlaceholderStoryImageUrl(imageUrl?: string) {
   return isPlaceholderImageUrl(imageUrl);
 }
 
-function looksLikeExpiredProneImageUrl(imageUrl: string) {
+/** OpenAI / Azure temporary blobs — URLs die quickly; hydrate to Supabase Storage for library covers. */
+export function looksLikeExpiredProneStoryImageUrl(imageUrl: string) {
   if (!imageUrl.startsWith("http://") && !imageUrl.startsWith("https://")) return false;
   try {
     return new URL(imageUrl).hostname.endsWith(".blob.core.windows.net");
@@ -18,6 +19,11 @@ export function hasGeneratedStoryImageUrl(imageUrl?: string): imageUrl is string
   return Boolean(
     imageUrl &&
       !isPlaceholderStoryImageUrl(imageUrl) &&
-      !looksLikeExpiredProneImageUrl(imageUrl),
+      !looksLikeExpiredProneStoryImageUrl(imageUrl),
   );
+}
+
+/** True when the reader can show something while the story runs — real art or the soft gradient fallback illustration. */
+export function hasRenderableStoryImageUrl(imageUrl?: string): imageUrl is string {
+  return hasGeneratedStoryImageUrl(imageUrl) || isPlaceholderStoryImageUrl(imageUrl);
 }

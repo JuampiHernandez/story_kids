@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { BookOpen } from "lucide-react";
 import { useState } from "react";
 
@@ -12,6 +11,9 @@ type StorySceneImageProps = {
   waitingIconSize?: number;
 };
 
+/**
+ * Uses a plain `<img>` so Supabase Storage (and other CDN) URLs load without Next/Image remotePatterns quirks.
+ */
 export function StorySceneImage({
   src,
   alt,
@@ -31,12 +33,14 @@ export function StorySceneImage({
   }
 
   return (
-    <Image
+    // eslint-disable-next-line @next/next/no-img-element -- intentional for arbitrary persisted story URLs
+    <img
       src={src}
       alt={alt}
       width={width}
       height={height}
-      unoptimized
+      loading="lazy"
+      decoding="async"
       onError={() => setFailed(true)}
     />
   );

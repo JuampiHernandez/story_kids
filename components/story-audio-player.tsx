@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { LoaderCircle, Pause, Play, Square } from "lucide-react";
 import type { NarrationLine, StorySession } from "@/lib/story-schema";
 
@@ -13,12 +13,19 @@ type StoryAudioPlayerProps = {
   onPlaybackChange?: (isReplaying: boolean) => void;
 };
 
-export function StoryAudioPlayer({
+export type StoryAudioPlayerHandle = {
+  play: () => void;
+  pause: () => void;
+  stop: () => void;
+  repeat: () => void;
+};
+
+export const StoryAudioPlayer = forwardRef<StoryAudioPlayerHandle, StoryAudioPlayerProps>(function StoryAudioPlayer({
   session,
   onSceneChange,
   onLineChange,
   onPlaybackChange,
-}: StoryAudioPlayerProps) {
+}, ref) {
   const [state, setState] = useState<PlayerState>("idle");
   const [nowPlaying, setNowPlaying] = useState("Ready to play this story aloud.");
   const [currentSceneNumber, setCurrentSceneNumber] = useState<number | null>(null);
@@ -31,13 +38,11 @@ export function StoryAudioPlayer({
     async (sceneIndex: number, lineIndex: number) => {
       const scene = session.scenes[sceneIndex];
       const line = scene.lines[lineIndex];
-      
-      // If the line already has a stored audio URL, use it directly
+
       if (line.audioUrl) {
         return line.audioUrl;
       }
 
-      // Fallback to generating audio on-demand using the TTS API
       const cacheKey = `${scene.id}:${lineIndex}`;
       const cachedUrl = audioCacheRef.current.get(cacheKey);
       if (cachedUrl) return cachedUrl;
@@ -121,13 +126,20 @@ export function StoryAudioPlayer({
     }
   }, [waitUntilResumed]);
 
-  const play = useCallback(async () => {
-    if (state === "paused") {
+  const play = useCallback(async (restartFromBeginning = false) => {
+    if (!restartFromBeginning && state === "paused") {
       isPausedRef.current = false;
       setState("playing");
       onPlaybackChange?.(true);
       void audioRef.current?.play();
       return;
+    }
+
+    if (restartFromBeginning) {
+      audioRef.current?.pause();
+      audioRef.current = null;
+      onSceneChange?.(null);
+      onLineChange?.(null);
     }
 
     const runId = runRef.current + 1;
@@ -137,17 +149,15 @@ export function StoryAudioPlayer({
     try {
       setState("loading");
       onPlaybackChange?.(true);
-      
+
       for (let sceneIndex = 0; sceneIndex < session.scenes.length; sceneIndex += 1) {
         const scene = session.scenes[sceneIndex];
         let previousSpeakerId: string | null = null;
 
-        // Notify about scene change
         onSceneChange?.(scene.id);
         onLineChange?.(null);
         setCurrentSceneNumber(scene.sceneNumber);
 
-        // Add a longer pause between scenes
         if (sceneIndex > 0) {
           if (runRef.current !== runId) return;
           await pausableDelay(800, runId);
@@ -158,25 +168,23 @@ export function StoryAudioPlayer({
           if (runRef.current !== runId) return;
           await waitUntilResumed();
           if (runRef.current !== runId) return;
-          
+
           const line = scene.lines[lineIndex];
           onLineChange?.({ sceneId: scene.id, lineIndex, line });
-          
-          // Add pause between different speakers to improve pacing
+
           if (previousSpeakerId !== null && previousSpeakerId !== line.speakerId) {
             await pausableDelay(600, runId);
             if (runRef.current !== runId) return;
           }
-          
+
           setNowPlaying(`${line.speakerName}: ${line.text}`);
 
           const url = await fetchLineAudio(sceneIndex, lineIndex);
           if (runRef.current !== runId) return;
           await waitUntilResumed();
           if (runRef.current !== runId) return;
-          
+
           if (!url) {
-            // Add a small pause even for failed audio
             await pausableDelay(300, runId);
             previousSpeakerId = line.speakerId;
             continue;
@@ -184,11 +192,10 @@ export function StoryAudioPlayer({
 
           setState("playing");
           await playAudioUrl(url);
-          
-          // Add a small pause after each line for better pacing
+
           await pausableDelay(200, runId);
           if (runRef.current !== runId) return;
-          
+
           previousSpeakerId = line.speakerId;
         }
       }
@@ -216,6 +223,21 @@ export function StoryAudioPlayer({
     audioRef.current?.pause();
     setState("paused");
   }, []);
+
+  const repeat = useCallback(() => {
+    void play(true);
+  }, [play]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      play: () => void play(),
+      pause,
+      stop,
+      repeat,
+    }),
+    [pause, play, repeat, stop],
+  );
 
   useEffect(() => {
     const audioCache = audioCacheRef.current;
@@ -251,13 +273,13 @@ export function StoryAudioPlayer({
         </button>
       ) : null}
       <div className="story-player-status">
-        {currentSceneNumber && (
+        {currentSceneNumber ? (
           <div className="scene-indicator">
             Page {currentSceneNumber} of {session.scenes.length}
           </div>
-        )}
+        ) : null}
         <p>{nowPlaying}</p>
       </div>
     </section>
   );
-}
+});

@@ -1,33 +1,5 @@
-create table if not exists public.toddler_tales_stories (
-  id text primary key,
-  child_name text not null,
-  status text not null check (status in ('setup', 'listening', 'playing', 'complete')),
-  session jsonb not null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create index if not exists toddler_tales_stories_child_name_idx
-  on public.toddler_tales_stories (child_name);
-
-create or replace function public.set_updated_at()
-returns trigger
-language plpgsql
-as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$;
-
-drop trigger if exists toddler_tales_stories_set_updated_at on public.toddler_tales_stories;
-
-create trigger toddler_tales_stories_set_updated_at
-before update on public.toddler_tales_stories
-for each row
-execute function public.set_updated_at();
-
-/* --- Profiles & story ownership (apply after initial table exists) --- */
+/* Profiles, story_settings, user_id on stories, auth sync triggers, RLS.
+   Kept in sync with supabase/schema.sql (section after initial stories table). */
 
 alter table public.toddler_tales_stories
   add column if not exists user_id uuid references auth.users (id) on delete set null;
@@ -92,6 +64,14 @@ create trigger on_auth_user_updated_email
 after update of email on auth.users
 for each row execute function public.sync_profile_email();
 
+insert into public.profiles (id, email, is_premium)
+select id, email, public.compute_is_premium_email(email)
+from auth.users
+on conflict (id) do update set
+  email = excluded.email,
+  is_premium = public.compute_is_premium_email(excluded.email),
+  updated_at = now();
+
 alter table public.profiles enable row level security;
 
 drop policy if exists "profiles_select_own" on public.profiles;
@@ -119,4 +99,3 @@ create policy "toddler_tales_no_direct_api"
   to anon, authenticated
   using (false)
   with check (false);
-

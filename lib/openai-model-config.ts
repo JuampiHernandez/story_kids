@@ -3,14 +3,26 @@
  */
 
 export const DEFAULT_OPENAI_STORY_MODEL = "gpt-4.1";
-/** Default favors lowest image API spend (see `OPENAI_IMAGE_MODEL` / `OPENAI_IMAGE_SIZE`). */
-export const DEFAULT_OPENAI_IMAGE_MODEL = "dall-e-2";
+/**
+ * Default image model (`images.generate`) after DALL·E 2/3 sunset on Images API (~May 2026).
+ * Prefer `gpt-image-1-mini` for low spend; upgrade via `OPENAI_IMAGE_MODEL=gpt-image-1` etc.
+ */
+export const DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-1-mini";
 /** Forced model for the "Disney / Pixar 3D animation" style — always max quality. */
 export const PIXAR_IMAGE_MODEL = "gpt-image-1";
 
 const DALL_E_2_SIZES = ["256x256", "512x512", "1024x1024"] as const;
 
-/** Chat / completions model — produces story JSON (`lib/story-engine.ts`). */
+/** Maps deprecated Images API models to supported GPT Image slugs (`OPENAI_IMAGE_MODEL` leftovers). */
+export function remapDeprecatedOpenAIImageModels(model: string): string {
+  const m = model.trim().toLowerCase();
+  // DALL·E family removed May 2026 — keep old .env entries working without user edits.
+  if (m.startsWith("dall-e-2")) return "gpt-image-1-mini";
+  if (m.startsWith("dall-e-3")) return "gpt-image-1";
+  return model.trim();
+}
+
+/** Chat / completions model for story turns (`OPENAI_*`). Not overridden by parent image style UI. */
 export function resolvedStoryModel(): string {
   const raw =
     process.env.OPENAI_STORY_MODEL?.trim() ||
@@ -19,13 +31,14 @@ export function resolvedStoryModel(): string {
 }
 
 /**
- * Images API model (`images.generate`). Supports `OPENAI_IMAGE_MODEL`; also reads
- * `IMAGE_MODEL` for convenience (matches common local naming).
+ * Images API model for watercolor / editor defaults (`images.generate` in `generateSceneImage`).
+ * Disney–Pixar style in the UI still uses fixed `gpt-image-1`; child-face `images.edit` uses gpt-image-1 tuning.
  */
 export function resolvedImageModel(): string {
   const raw =
     process.env.OPENAI_IMAGE_MODEL?.trim() || process.env.IMAGE_MODEL?.trim();
-  return raw || DEFAULT_OPENAI_IMAGE_MODEL;
+  const slug = raw || DEFAULT_OPENAI_IMAGE_MODEL;
+  return remapDeprecatedOpenAIImageModels(slug);
 }
 
 export function isDallE2Model(model: string): boolean {
@@ -116,6 +129,15 @@ export function resolveImageGenerationParams(
   tier?: ImageQualityTier,
 ): ImageGenerationBase {
   return tier ? imageGenerationParamsForTier(modelFromEnv, tier) : imageGenerationParams(modelFromEnv);
+}
+
+/**
+ * Anonymous guest path: watercolor-only UX, capped to `gpt-image-1-mini` unless env already resolves to mini.
+ */
+export function economyGuestImageGenerationParams(): ImageGenerationBase {
+  const resolved = resolvedImageModel();
+  const capped = resolved.startsWith("gpt-image-1-mini") ? resolved : "gpt-image-1-mini";
+  return imageGenerationParams(capped);
 }
 
 /**
