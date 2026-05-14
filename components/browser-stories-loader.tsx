@@ -42,21 +42,18 @@ export function BrowserStoriesLoader() {
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   }, []);
 
-  /** When signed in: merge local backup stories so tales still appear if the DB row lacks `user_id` (anonymous saves). */
+  /**
+   * When signed in: enrich **server-owned** rows with the browser copy (richer media) if the same id exists locally.
+   * Do not add browser-only entries — that leaked unrelated cached sessions into "my books".
+   */
   const mergeMyWithBrowser = useCallback((remote: StorySession[]) => {
-    const browserStories = getStoriesFromBrowser();
-    const storiesById = new Map(remote.map((story) => [story.id, story]));
+    const browserById = new Map(getStoriesFromBrowser().map((story) => [story.id, story]));
 
-    browserStories.forEach((story) => {
-      const existing = storiesById.get(story.id);
-      if (!existing) {
-        storiesById.set(story.id, story);
-        return;
-      }
-      storiesById.set(story.id, pickRicherPersistedStory(existing, story));
-    });
-
-    return Array.from(storiesById.values())
+    return remote
+      .map((story) => {
+        const local = browserById.get(story.id);
+        return local ? pickRicherPersistedStory(story, local) : story;
+      })
       .filter(storyQualifiesForMyBooksShelf)
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   }, []);

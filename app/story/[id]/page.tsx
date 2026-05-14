@@ -1,4 +1,5 @@
 import { memoryStories } from "@/lib/memory-store";
+import { hydratePersistedStoryImages } from "@/lib/supabase-storage";
 import { getStorySession } from "@/lib/supabase";
 import { StoryPageClient } from "@/components/story-page-client";
 
@@ -8,7 +9,12 @@ type StoryPageProps = {
 
 export default async function StoryPage({ params }: StoryPageProps) {
   const { id } = await params;
-  const session = memoryStories.get(id) || (await getStorySession(id));
+  let session = memoryStories.get(id) || (await getStorySession(id));
+
+  if (session) {
+    session = await hydratePersistedStoryImages(session);
+    memoryStories.set(id, session);
+  }
 
   return <StoryPageClient storyId={id} serverSession={session} />;
 }

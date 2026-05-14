@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AudioLines,
+  ArrowUp,
   BookOpen,
   ChevronLeft,
+  Heart,
   Home,
   Mic,
   Pause,
@@ -877,6 +878,13 @@ export function ChildStoryStage() {
         : "making"
       : "home";
   const showGeneratingScreen = isGenerating && !currentScene;
+  const showIdeaBook = hasStarted && !currentScene && !showGeneratingScreen;
+  const childName = parentSettings.childName.trim() || DEFAULT_STORY_SETTINGS.childName;
+  const isListening = mode === "listening";
+  const isAiSpeakingPrompt = mode === "speaking";
+  const speechBubbleLine = caption.trim() ? caption : `Hi ${childName}. What should our story be about?`;
+  const leftWaveBars = [0.4, 0.7, 0.55, 0.85, 0.5, 0.7, 0.45, 0.6];
+  const rightWaveBars = [0.6, 0.45, 0.7, 0.5, 0.85, 0.55, 0.7, 0.4];
 
   /** Match `/story/[id]` desktop spread layout while narration runs (stacked columns on narrow viewports via shared CSS). */
   const liveBookReading = Boolean(currentScene && session);
@@ -960,6 +968,122 @@ export function ChildStoryStage() {
             </nav>
           ) : null}
         </main>
+      ) : showIdeaBook ? (
+        <main className={`idea-stage${isListening ? " idea-stage-listening" : ""}`} aria-live="polite">
+          <div className="idea-stage-deco" aria-hidden="true">
+            <span className="idea-cloud idea-cloud-l" />
+            <span className="idea-cloud idea-cloud-c" />
+            <span className="idea-cloud idea-cloud-r" />
+            <span className="idea-balloon" />
+            <span className="idea-castle" />
+            <span className="idea-tree idea-tree-l" />
+            <span className="idea-tree idea-tree-r" />
+            <span className="idea-tree idea-tree-s1" />
+            <span className="idea-tree idea-tree-s2" />
+            <span className="idea-cattail idea-cattail-1" />
+            <span className="idea-cattail idea-cattail-2" />
+            <span className="idea-cattail idea-cattail-3" />
+          </div>
+
+          <header className="idea-topbar">
+            <Link href="/" aria-label="Storypop home">
+              <StorypopLogo className="storypop-logo" title="Storypop" />
+            </Link>
+            <SettingsAvatarLink />
+          </header>
+
+          <article className="idea-book">
+            <div className="idea-bookmark" aria-hidden="true">
+              <span className="idea-bookmark-star">★</span>
+            </div>
+
+            <div className="idea-book-spread">
+              <section className="idea-book-page idea-page-left" aria-label="Story prompt">
+                <h1 className="idea-headline idea-headline-fill">
+                  what should
+                  <br />
+                  happen?
+                </h1>
+              </section>
+
+              <span className="idea-book-spine" aria-hidden="true" />
+
+              <section className="idea-book-page idea-page-right">
+                {isListening && caption.trim() ? (
+                  <span className="idea-sr-only">{caption}</span>
+                ) : null}
+
+                <div className="idea-right-stack">
+                  <div className="idea-orb-stage">
+                    <VoiceOrb mode={mode} />
+                    <span className="idea-orb-sparkle idea-orb-sparkle-1">+</span>
+                    <span className="idea-orb-sparkle idea-orb-sparkle-2">✦</span>
+                    <span className="idea-orb-sparkle idea-orb-sparkle-3">★</span>
+                    <span className="idea-orb-sparkle idea-orb-sparkle-4">·</span>
+                  </div>
+
+                  {isAiSpeakingPrompt ? (
+                    <div className="idea-speech-bubble" role="status" aria-live="polite">
+                      <p>{speechBubbleLine}</p>
+                    </div>
+                  ) : null}
+
+                  <div className="idea-waveform" aria-hidden="true">
+                    <div className="idea-wave-row idea-wave-row-l">
+                      {leftWaveBars.map((scale, idx) => (
+                        <span
+                          key={`l-${idx}`}
+                          className="idea-wave-bar"
+                          style={{
+                            height: `${scale * 100}%`,
+                            animationDelay: `${idx * 80}ms`,
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className={`idea-mic-button${isListening ? " idea-mic-button-active" : ""}`}
+                      aria-label="Speak your story idea"
+                      tabIndex={-1}
+                    >
+                      <Mic size={20} strokeWidth={2.4} />
+                    </button>
+                    <div className="idea-wave-row idea-wave-row-r">
+                      {rightWaveBars.map((scale, idx) => (
+                        <span
+                          key={`r-${idx}`}
+                          className="idea-wave-bar"
+                          style={{
+                            height: `${scale * 100}%`,
+                            animationDelay: `${(idx + 4) * 80}ms`,
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {isListening ? (
+                  <p className="idea-prompt">
+                    <span className="idea-prompt-arrow">
+                      <ArrowUp size={14} strokeWidth={3} />
+                    </span>
+                    Your turn! Speak your idea
+                    <Heart className="idea-prompt-heart" size={14} fill="currentColor" strokeWidth={0} />
+                  </p>
+                ) : null}
+
+                {spokenTranscript ? (
+                  <span className="idea-transcript">You said: {spokenTranscript}</span>
+                ) : null}
+                {error ? <strong className="idea-error">{error}</strong> : null}
+              </section>
+            </div>
+
+            <div className="idea-book-ribbon" aria-hidden="true">★</div>
+          </article>
+        </main>
       ) : (
         <main
           className={
@@ -1005,48 +1129,23 @@ export function ChildStoryStage() {
 
             {showGeneratingScreen ? null : (
               <div className={`home-screen home-screen-${screenState}`}>
-                {hasStarted ? (
-                  <section className="hero-copy">
-                    <p className="eyebrow">Storypop</p>
-                    <h1>
-                      <>
-                        what should
-                        <br />
-                        happen?
-                      </>
-                    </h1>
-                    <p>Tell your idea out loud and we will turn it into a story.</p>
-                  </section>
-                ) : null}
-
-                {hasStarted ? (
-                  <section className="create-panel">
-                    <VoiceOrb mode={mode} />
-                    <p className="talk-hint">
-                      <AudioLines size={24} />
-                      {caption}
-                    </p>
-                    {spokenTranscript ? <span className="transcript-pill">You said: {spokenTranscript}</span> : null}
-                    {error ? <strong className="error-pill">{error}</strong> : null}
-                  </section>
-                ) : (
-                  <section className="home-actions home-actions-simple">
-                    <button
-                      className="start-button"
-                      type="button"
-                      onClick={() => void begin()}
-                      aria-label={storyEnded ? "Start a new story" : "Start story"}
-                    >
-                      <Mic size={58} />
-                      Start
-                    </button>
-                    <Link className="library-button" href="/stories">
-                      <BookOpen size={18} />
-                      my books
-                    </Link>
-                    {error ? <strong className="error-pill">{error}</strong> : null}
-                  </section>
-                )}
+                <section className="home-actions home-actions-simple">
+                  <button
+                    className="start-button"
+                    type="button"
+                    onClick={() => void begin()}
+                    aria-label={storyEnded ? "Start a new story" : "Start story"}
+                  >
+                    <Mic size={58} />
+                    Play
+                  </button>
+                  <p className="home-tap-hint">Tap and tell us a story idea</p>
+                  <Link className="library-button" href="/stories">
+                    <BookOpen size={18} />
+                    my books
+                  </Link>
+                  {error ? <strong className="error-pill">{error}</strong> : null}
+                </section>
               </div>
             )}
 
