@@ -46,7 +46,11 @@ export function loadStorySettings(): StoryParentSettings {
     if (!raw) return DEFAULT_STORY_SETTINGS;
     const parsedJson = JSON.parse(raw) as unknown;
     const parsed = storyParentSettingsSchema.safeParse(parsedJson);
-    return parsed.success ? parsed.data : DEFAULT_STORY_SETTINGS;
+    if (!parsed.success) return DEFAULT_STORY_SETTINGS;
+    if (parsed.data.imageQualityTier === "low") {
+      return { ...parsed.data, imageQualityTier: "medium" };
+    }
+    return parsed.data;
   } catch {
     return DEFAULT_STORY_SETTINGS;
   }

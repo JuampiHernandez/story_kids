@@ -325,6 +325,7 @@ export function ChildStoryStage() {
             body: JSON.stringify({
               sessionId: storySession.id,
               sceneId: scene.id,
+              session: storySession,
               imageQualityTier: parentSettings.imageQualityTier,
               imageStyle: parentSettings.imageStyle,
               useChildAsProtagonist: parentSettings.useChildAsProtagonist,

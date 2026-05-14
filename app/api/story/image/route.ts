@@ -9,8 +9,9 @@ import { memoryStories } from "@/lib/memory-store";
 import type { ImageQualityTier } from "@/lib/openai-model-config";
 import { fetchUserPremiumFlag } from "@/lib/supabase-profiles";
 import { type ImageStyle, imageStyleSchema } from "@/lib/story-settings";
-import { getStorySession, saveStorySession } from "@/lib/supabase";
+import { saveStorySession } from "@/lib/supabase";
 import { getAuthSessionUser } from "@/lib/supabase/auth-server";
+import { resolveStorySession } from "@/lib/story-session-resolve";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,8 @@ export async function POST(request: Request) {
   const body = (await request.json()) as {
     sessionId?: string;
     sceneId?: string;
+    /** Snapshot from client when the handler runs on a different instance than /api/story/turn */
+    session?: unknown;
     imageQualityTier?: ImageQualityTier;
     imageStyle?: ImageStyle;
     useChildAsProtagonist?: boolean;
@@ -48,7 +51,7 @@ export async function POST(request: Request) {
   if (!user) {
     economyGuestMode = true;
     imageStyle = "watercolor";
-    imageQualityTier = "low";
+    imageQualityTier = "medium";
     allowChildFace = false;
   } else {
     allowChildFace = true;
@@ -70,7 +73,7 @@ export async function POST(request: Request) {
     imageQualityTier = tier;
   }
 
-  const session = memoryStories.get(body.sessionId) || (await getStorySession(body.sessionId));
+  const session = await resolveStorySession(body.sessionId, body.session);
   if (!session) {
     return NextResponse.json({ error: "Story session not found" }, { status: 404 });
   }

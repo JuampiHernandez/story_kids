@@ -2,13 +2,16 @@
 
 import { useState } from "react";
 import { Volume2, Loader2 } from "lucide-react";
+import type { StorySession } from "@/lib/story-schema";
 
 interface AudioGeneratorButtonProps {
   storyId: string;
+  /** Passed when the story may not be in server memory (serverless) */
+  session?: StorySession;
   onComplete?: () => void;
 }
 
-export function AudioGeneratorButton({ storyId, onComplete }: AudioGeneratorButtonProps) {
+export function AudioGeneratorButton({ storyId, session, onComplete }: AudioGeneratorButtonProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [status, setStatus] = useState<string>("");
 
@@ -21,7 +24,11 @@ export function AudioGeneratorButton({ storyId, onComplete }: AudioGeneratorButt
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: storyId, regenerate: false }),
+        body: JSON.stringify({
+          sessionId: storyId,
+          regenerate: false,
+          ...(session ? { session } : {}),
+        }),
       });
 
       const result = await response.json();

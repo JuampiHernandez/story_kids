@@ -85,13 +85,9 @@ export function imageGenerationParams(modelFromEnv: string): ImageGenerationBase
     };
   }
 
-  // gpt-image-1 (and dated snapshots): quality low | medium | high — default low (~cheapest).
-  const quality =
-    q === "medium" || q === "high"
-      ? q
-      : q === "low" || q === undefined || q === ""
-        ? "low"
-        : "low";
+  // gpt-image-1 (and dated snapshots): quality medium | high — avoid "low" (unreliable on mini/full).
+  const quality: "medium" | "high" =
+    q === "high" ? "high" : "medium";
 
   return {
     model,
@@ -108,19 +104,21 @@ export function imageGenerationParamsForTier(
 ): ImageGenerationBase {
   const model = modelFromEnv.trim();
   const n = 1 as const;
+  /** `quality: "low"` on gpt-image-* has been unreliable; product minimum is medium. */
+  const tierFloor: ImageQualityTier = tier === "low" ? "medium" : tier;
 
   if (isDallE2Model(model)) {
-    const size = tier === "low" ? "256x256" : tier === "medium" ? "512x512" : "1024x1024";
+    const size =
+      tierFloor === "medium" ? "512x512" : tierFloor === "high" ? "1024x1024" : "512x512";
     return { model, size, n };
   }
 
   if (model.startsWith("dall-e-3")) {
-    const quality = tier === "high" ? "hd" : "standard";
+    const quality = tierFloor === "high" ? "hd" : "standard";
     return { model, size: "1024x1024", quality, n };
   }
 
-  const quality: "low" | "medium" | "high" =
-    tier === "low" ? "low" : tier === "medium" ? "medium" : "high";
+  const quality: "medium" | "high" = tierFloor === "medium" ? "medium" : "high";
   return { model, size: "1024x1024", quality, n };
 }
 
@@ -137,7 +135,7 @@ export function resolveImageGenerationParams(
 export function economyGuestImageGenerationParams(): ImageGenerationBase {
   const resolved = resolvedImageModel();
   const capped = resolved.startsWith("gpt-image-1-mini") ? resolved : "gpt-image-1-mini";
-  return imageGenerationParams(capped);
+  return imageGenerationParamsForTier(capped, "medium");
 }
 
 /**
