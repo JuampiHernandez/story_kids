@@ -258,9 +258,11 @@ export function SettingsAuthenticatedPanel({ userEmail }: Props) {
             Pick the art direction for every illustration. Watercolor matches the classic Storypop look; the Pixar style swaps in a cinematic 3D animated render.
           </p>
           {!isPremium ? (
-            <p className="settings-hint">
-              Pixar-style scenes and full High quality controls unlock for premium storytellers (ElevenLabs, Cursor team emails, or invited accounts).
-            </p>
+            <aside className="settings-quote-card" aria-label="About premium illustration options">
+              <p>
+                Pixar-style scenes and full High quality controls unlock for premium storytellers (ElevenLabs, Cursor team emails, or invited accounts).
+              </p>
+            </aside>
           ) : null}
           <div className="settings-segmented" role="group" aria-label="AI image style">
             {(
@@ -300,7 +302,7 @@ export function SettingsAuthenticatedPanel({ userEmail }: Props) {
           <p className="settings-hint">
             {settings.imageStyle === "disney-pixar"
               ? "Pixar style always renders at the highest quality (gpt-image-1 · 1024×1024 · high)."
-              : "Higher quality uses more detail (and API cost). What changes depends on your image model in production."}
+              : "Higher quality uses more detail (and API cost). Medium is the standard for everyone—we removed the old “Low” tier because it was unreliable with current image models."}
           </p>
           <div
             className="settings-segmented"
@@ -315,8 +317,7 @@ export function SettingsAuthenticatedPanel({ userEmail }: Props) {
           >
             {(
               [
-                ["low", "Low", "Fastest, lightest"],
-                ["medium", "Medium", "Balanced"],
+                ["medium", "Medium", "Standard · default"],
                 ["high", "High", "Sharpest"],
               ] as const
             ).map(([value, label, hint]) => {

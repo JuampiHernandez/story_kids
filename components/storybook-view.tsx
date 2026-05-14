@@ -89,6 +89,7 @@ export function StorybookView({ session }: StorybookViewProps) {
           {!storyHasFullStoredAudio(session) ? (
             <AudioGeneratorButton
               storyId={session.id}
+              session={session}
               onComplete={() => {
                 router.refresh();
               }}

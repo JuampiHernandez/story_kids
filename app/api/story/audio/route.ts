@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { memoryStories } from "@/lib/memory-store";
-import { getStorySession, saveStorySession } from "@/lib/supabase";
+import { saveStorySession } from "@/lib/supabase";
+import { resolveStorySession } from "@/lib/story-session-resolve";
 import { getAuthSessionUser } from "@/lib/supabase/auth-server";
 import { preGenerateStoryAudio } from "@/lib/audio-storage";
 
@@ -10,13 +11,14 @@ export async function POST(request: Request) {
   const body = (await request.json()) as {
     sessionId: string;
     regenerate?: boolean; // Force regeneration of existing audio
+    session?: unknown;
   };
 
   if (!body.sessionId) {
     return NextResponse.json({ error: "Missing sessionId" }, { status: 400 });
   }
 
-  const session = memoryStories.get(body.sessionId) || (await getStorySession(body.sessionId));
+  const session = await resolveStorySession(body.sessionId, body.session);
   if (!session) {
     return NextResponse.json({ error: "Story session not found" }, { status: 404 });
   }

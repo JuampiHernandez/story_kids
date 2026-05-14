@@ -14,7 +14,9 @@ export function SettingsMagicLinkPanel() {
     const sb = createSupabaseBrowserClient();
     if (!sb) {
       setStatus("error");
-      setMessage("Login is not configured yet (missing NEXT_PUBLIC Supabase keys).");
+      setMessage(
+        "Sign-in is not wired up on this deployment: set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in your host (e.g. Vercel → Environment Variables → Production), then redeploy. In Supabase → Authentication → URL Configuration, add your production URL and redirect https://YOUR_DOMAIN/auth/callback.",
+      );
       return;
     }
 

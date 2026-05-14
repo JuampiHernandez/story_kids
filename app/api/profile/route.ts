@@ -22,6 +22,10 @@ function mergeProfileStorySettings(
     ...fromDb,
   };
 
+  if (merged.imageQualityTier === "low") {
+    merged.imageQualityTier = "medium";
+  }
+
   if (!parsed.success && isPremium) {
     merged.imageQualityTier = "high";
   }
@@ -86,12 +90,14 @@ export async function PATCH(request: Request) {
   const isPremium = await fetchUserPremiumFlag(user.id, user.email ?? undefined);
 
   let nextSettings = parsed.data;
+  if (nextSettings.imageQualityTier === "low") {
+    nextSettings = { ...nextSettings, imageQualityTier: "medium" };
+  }
   if (!isPremium) {
     nextSettings = {
-      ...parsed.data,
-      imageStyle: parsed.data.imageStyle === "disney-pixar" ? "watercolor" : parsed.data.imageStyle,
-      imageQualityTier:
-        parsed.data.imageQualityTier === "high" ? "medium" : parsed.data.imageQualityTier,
+      ...nextSettings,
+      imageStyle: nextSettings.imageStyle === "disney-pixar" ? "watercolor" : nextSettings.imageStyle,
+      imageQualityTier: nextSettings.imageQualityTier === "high" ? "medium" : nextSettings.imageQualityTier,
     };
   }
 
